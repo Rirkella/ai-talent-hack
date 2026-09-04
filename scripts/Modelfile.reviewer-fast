@@ -1,0 +1,16 @@
+# Быстрый профиль: та же конфигурация на younger-модели 4b.
+# Используется для черновых прогонов и когда 9b занята.
+FROM qwen3.5:4b
+
+PARAMETER num_ctx 32768
+PARAMETER temperature 0
+PARAMETER top_p 1
+PARAMETER seed 42
+PARAMETER repeat_penalty 1.0
+# qwen3.5 приносит из базового Modelfile presence_penalty 1.5 и top_k 20.
+# При temperature=0 выбор жадный, но штрафы всё равно правят логиты до argmax,
+# а структурный JSON состоит из повторяющихся токенов (кавычки, скобки, имена полей).
+# Гасим оба, иначе воспроизводимость и валидность JSON страдают.
+PARAMETER presence_penalty 0
+PARAMETER frequency_penalty 0
+PARAMETER top_k 0

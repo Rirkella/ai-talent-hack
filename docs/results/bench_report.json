@@ -1,0 +1,234 @@
+{
+  "model": "avito-reviewer",
+  "started_at": "2026-09-04 07:33:41",
+  "runs": [
+    {
+      "label": "слабое",
+      "run_index": 0,
+      "score": 6.5,
+      "max_score": 10.0,
+      "duration_s": 40.5,
+      "evidence_total": 15,
+      "evidence_verified": 13,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.394,
+      "ai_confidence": "средняя",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 0.5,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 0.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "среднее",
+      "run_index": 0,
+      "score": 8.3,
+      "max_score": 10.0,
+      "duration_s": 48.3,
+      "evidence_total": 20,
+      "evidence_verified": 16,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.093,
+      "ai_confidence": "высокая",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.8
+      }
+    },
+    {
+      "label": "хорошее",
+      "run_index": 0,
+      "score": 8.0,
+      "max_score": 10.0,
+      "duration_s": 47.5,
+      "evidence_total": 22,
+      "evidence_verified": 21,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.309,
+      "ai_confidence": "средняя",
+      "formal_violations": 0,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "слабое",
+      "run_index": 1,
+      "score": 6.5,
+      "max_score": 10.0,
+      "duration_s": 39.7,
+      "evidence_total": 15,
+      "evidence_verified": 13,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.394,
+      "ai_confidence": "средняя",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 0.5,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 0.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "среднее",
+      "run_index": 1,
+      "score": 8.3,
+      "max_score": 10.0,
+      "duration_s": 49.2,
+      "evidence_total": 22,
+      "evidence_verified": 18,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.093,
+      "ai_confidence": "высокая",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.8
+      }
+    },
+    {
+      "label": "хорошее",
+      "run_index": 1,
+      "score": 8.0,
+      "max_score": 10.0,
+      "duration_s": 47.0,
+      "evidence_total": 22,
+      "evidence_verified": 21,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.309,
+      "ai_confidence": "средняя",
+      "formal_violations": 0,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "слабое",
+      "run_index": 2,
+      "score": 6.5,
+      "max_score": 10.0,
+      "duration_s": 40.6,
+      "evidence_total": 16,
+      "evidence_verified": 14,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.394,
+      "ai_confidence": "средняя",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 0.5,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 0.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "среднее",
+      "run_index": 2,
+      "score": 8.3,
+      "max_score": 10.0,
+      "duration_s": 49.6,
+      "evidence_total": 22,
+      "evidence_verified": 18,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.093,
+      "ai_confidence": "высокая",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.8
+      }
+    },
+    {
+      "label": "хорошее",
+      "run_index": 2,
+      "score": 8.0,
+      "max_score": 10.0,
+      "duration_s": 46.7,
+      "evidence_total": 22,
+      "evidence_verified": 21,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.309,
+      "ai_confidence": "средняя",
+      "formal_violations": 0,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "mean_scores": {
+      "слабое": 6.5,
+      "среднее": 8.3,
+      "хорошее": 8.0
+    },
+    "ranking_accuracy": 0.6666666666666666,
+    "stability_spread": {
+      "слабое": 0.0,
+      "среднее": 0.0,
+      "хорошее": 0.0
+    },
+    "evidence_verified_rate": 0.8806818181818182,
+    "mean_duration_s": 45.455555555555556,
+    "runs_per_case": 3,
+    "pairs": [
+      {
+        "pair": "слабое < среднее",
+        "correct_runs": 3,
+        "runs": 3,
+        "mean_gap": 1.8,
+        "separated": true
+      },
+      {
+        "pair": "слабое < хорошее",
+        "correct_runs": 3,
+        "runs": 3,
+        "mean_gap": 1.5,
+        "separated": true
+      },
+      {
+        "pair": "среднее < хорошее",
+        "correct_runs": 0,
+        "runs": 3,
+        "mean_gap": -0.3,
+        "separated": false
+      }
+    ]
+  }
+}

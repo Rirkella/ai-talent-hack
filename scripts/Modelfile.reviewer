@@ -1,0 +1,20 @@
+# Производная модель для Avito AI Reviewer.
+# Причина существования: OpenAI-совместимый эндпоинт Ollama (/v1) не принимает
+# поле "options", поэтому num_ctx нельзя задать из кода через OpenAI SDK.
+# По умолчанию Ollama даёт 4096 токенов контекста — этого не хватает на
+# условие + работу + рубрику, и хвост работы молча теряется.
+# Значение зашивается в модель здесь и проверяется ассертом в smoke-тесте.
+FROM qwen3.5:9b
+
+PARAMETER num_ctx 32768
+PARAMETER temperature 0
+PARAMETER top_p 1
+PARAMETER seed 42
+PARAMETER repeat_penalty 1.0
+# qwen3.5 приносит из базового Modelfile presence_penalty 1.5 и top_k 20.
+# При temperature=0 выбор жадный, но штрафы всё равно правят логиты до argmax,
+# а структурный JSON состоит из повторяющихся токенов (кавычки, скобки, имена полей).
+# Гасим оба, иначе воспроизводимость и валидность JSON страдают.
+PARAMETER presence_penalty 0
+PARAMETER frequency_penalty 0
+PARAMETER top_k 0

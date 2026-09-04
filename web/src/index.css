@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Палитра задаётся переменными и переопределяется под тёмную тему целиком.
+  Тема переключается классом `dark` на <html>, а не медиазапросом:
+  выбор темы — решение пользователя.
+*/
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #dfe3e8;
+  --text: #10151c;
+  --text-dim: #5b6675;
+  --brand: #0088cc;
+  --ok: #14804a;
+  --warn: #a15c00;
+  --err: #c02929;
+  --info: #1f6feb;
+  /*
+    Цвета рядов на графиках заданы отдельно от --brand и --ok.
+    Причина: те подобраны для текста и ссылок, а не для заливок, и в тёмной
+    теме выходят за допустимую полосу светлоты для меток данных. Обе пары
+    проверены на разделимость при дальтонизме и контраст к поверхности
+    карточки, светлая к #ffffff и тёмная к #161b22 — по отдельности,
+    а не автоматической инверсией.
+  */
+  --series-1: #0088cc;
+  --series-2: #14804a;
+}
+
+html.dark {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #1c2430;
+  --border: #2b3441;
+  --text: #e6edf3;
+  --text-dim: #93a1b1;
+  --brand: #2ea8ff;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --err: #f85149;
+  --info: #58a6ff;
+  --series-1: #2a94e8;
+  --series-2: #35a355;
+}
+
+/*
+  min-height, а не height: страница должна расти под контент, а не
+  переполнять контейнер фиксированной высоты. Вкладка методиста —
+  около 2900 px, и жёсткая высота 100 % здесь семантически неверна,
+  хотя браузер и вытягивал её за счёт переполнения.
+*/
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    14px/1.55 -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  /*
+    Карточка блока. Тень и отступ не украшение: на длинном экране методиста
+    десяток разделов шёл сплошной лентой, и глазом было не понять, где
+    кончается один и начинается другой. Граница одного цвета с фоном этого
+    не решала — нужен разрыв.
+  */
+  .card {
+    @apply rounded-lg border p-4;
+    background: var(--surface);
+    border-color: var(--border);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+  }
+
+  /* Заголовок блока крупнее текста внутри: это точка входа взгляда. */
+  .card > div > button.font-semibold {
+    font-size: 15px;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5
+           text-sm font-medium transition-colors disabled:cursor-not-allowed
+           disabled:opacity-50;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--brand);
+  }
+  .btn-primary {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .input {
+    @apply w-full rounded-md px-2.5 py-1.5 text-sm outline-none;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .input:focus {
+    border-color: var(--brand);
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+
+  .muted {
+    color: var(--text-dim);
+  }
+
+  /* Подсветка фрагментов документа в просмотрщике. */
+  .hl-evidence {
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+    border-bottom: 2px solid var(--ok);
+  }
+  .hl-gap {
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    border-bottom: 2px solid var(--warn);
+  }
+  .hl-ai {
+    background: color-mix(in srgb, #a371f7 20%, transparent);
+    border-bottom: 2px solid #a371f7;
+  }
+  .hl-pii {
+    background: color-mix(in srgb, var(--text-dim) 22%, transparent);
+    border-bottom: 2px dashed var(--text-dim);
+    /* Слой рисуется тегом <mark>, а браузер красит его в жёлтое с чёрным
+       текстом. В тёмной теме это нечитаемо, поэтому цвет наследуется. */
+    color: inherit;
+  }
+}
+
+/* Скроллбар в тон теме — иначе в тёмной он остаётся светлым. */
+* {
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
