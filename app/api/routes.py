@@ -11,7 +11,7 @@ import asyncio
 import json
 import shutil
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
@@ -558,10 +558,36 @@ async def set_scoring(
     Пересчёт на месте — смысл настройки: методист двигает вес и сразу видит,
     как переупорядочилась очередь ревьюеров, а не ждёт нового прогона модели.
     """
+    # Имена и границы проверяются. Раньше принималось что угодно: вес −5
+    # и вес 99 сохранялись молча, а отрицательный вес переворачивает смысл —
+    # работы с признаками ИИ опускались бы в самый низ очереди, ровно туда,
+    # где их никто не смотрит. Неизвестное имя тоже принималось и оседало
+    # в настройках мёртвым грузом: методист думал, что настроил, а не менялось
+    # ничего.
+    from app.scoring.formula import PriorityWeights
+
+    known = set(PriorityWeights.__dataclass_fields__)
     for k, v in (body.weights or {}).items():
-        _scoring[k] = float(v)
+        if k not in known:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Неизвестный вес «{k}». Доступны: "
+                f"{', '.join(sorted(x for x in known if not x.endswith('_on')))}.",
+            )
+        value = float(v)
+        if not 0.0 <= value <= 1.0:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Вес «{k}» должен быть от 0 до 1, получено {value:g}.",
+            )
+        _scoring[k] = value
     for k, v in (body.toggles or {}).items():
-        _scoring[k if k.endswith("_on") else f"{k}_on"] = bool(v)
+        key = k if k.endswith("_on") else f"{k}_on"
+        if key not in known:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Неизвестный тумблер «{k}»."
+            )
+        _scoring[key] = bool(v)
     if body.formal_penalty_on is not None:
         _scoring["formal_penalty_on"] = body.formal_penalty_on
     if body.formal_penalty_per_violation is not None:
@@ -993,6 +1019,23 @@ async def set_normal_deadlines(
 # ── работы ────────────────────────────────────────────────────────────────────
 
 
+# Пустой файл — это промах мышью, а не работа. Двести байт с запасом
+# отделяют его от осмысленного документа: даже пустой `.docx` весит больше.
+MIN_UPLOAD_BYTES = 200
+
+
+def safe_file_name(raw: str | None) -> str:
+    """Имя файла для показа: только имя, без пути и без хвоста в 300 знаков.
+
+    Путь на диске генерируется сам, так что подмены каталога здесь быть не
+    может. Но имя из запроса попадает в интерфейс и в выгрузку, а прислать
+    можно что угодно: проверено запросом — `../../../etc/passwd.md` и имя
+    из трёхсот символов принимались как есть.
+    """
+    name = Path((raw or "").replace("\\", "/")).name.strip() or "работа"
+    return name[:200]
+
+
 def _save_upload(file: UploadFile, *, prefix: str = "work") -> Path:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in SUPPORTED:
@@ -1004,6 +1047,14 @@ def _save_upload(file: UploadFile, *, prefix: str = "work") -> Path:
     path = settings.upload_dir / f"{prefix}_{uuid.uuid4().hex[:8]}{suffix}"
     with path.open("wb") as out:
         shutil.copyfileobj(file.file, out)
+
+    if path.stat().st_size < MIN_UPLOAD_BYTES:
+        path.unlink(missing_ok=True)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Файл пустой или почти пустой — проверять в нём нечего. "
+            "Возможно, выбран не тот файл.",
+        )
     return path
 
 
@@ -1037,6 +1088,19 @@ async def upload_submission(
     # этой строки любой студент мог бы приписать работу однокурснику.
     if user.role == Role.STUDENT:
         student_id = user.id
+
+    # Студент должен существовать. Внешнего ключа SQLite по умолчанию не
+    # соблюдает, и работа заводилась на несуществующего пользователя:
+    # проверено запросом с `student_id: "net-takogo"` — HTTP 200. В интерфейсе
+    # такая работа показывалась с идентификатором вместо имени и висела
+    # в потоке ничьей.
+    student = await session.get(User, student_id)
+    if student is None or student.role != Role.STUDENT or not student.active:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Студент не найден. Выберите его из списка или заведите в разделе "
+            "«Участники».",
+        )
 
     title = (new_assignment_title or "").strip()
     if not assignment_id and not title:
@@ -1113,7 +1177,7 @@ async def upload_submission(
         assignment_id=assignment_id,
         student_id=previous.student_id if previous else student_id,
         file_path=str(path),
-        file_name=file.filename or path.name,
+        file_name=safe_file_name(file.filename) or path.name,
         file_sha256=sha,
         track=track,
         detected_track=detected,
@@ -1232,6 +1296,13 @@ async def list_submissions(
     ]
 
 
+def _rubric_max(a: Assignment | None) -> float | None:
+    """Сумма максимумов критериев задания. `None`, если критериев нет."""
+    criteria = ((a.rubric or {}) if a else {}).get("criteria", [])
+    total = sum(float(c.get("max_score") or 0.0) for c in criteria)
+    return total or None
+
+
 def _track_name(track_id: str) -> str:
     """Человеческое название направления по идентификатору."""
     return next((t["name"] for t in TRACKS if t["id"] == track_id), track_id)
@@ -1280,7 +1351,10 @@ def _submission_dict(
         "review_state": rstate,
         "review_state_text": rtext,
         "preliminary_score": review.get("preliminary_score"),
-        "max_score": review.get("max_score"),
+        # Максимум берётся из проверки, а если её ещё не было — из критериев
+        # задания. Интерфейс подставлял на это место десятку, и работа курса
+        # с максимумом 20 показывалась студенту как «X / 10».
+        "max_score": review.get("max_score") or _rubric_max(a),
         "final_score": s.final_score,
         "confirmed_at": s.confirmed_at.isoformat() if s.confirmed_at else None,
     }
@@ -1676,19 +1750,106 @@ async def confirm(
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Работа не найдена")
 
-    preliminary = (s.review or {}).get("preliminary_score")
-    s.final_score = body.final_score
-    s.final_feedback = body.feedback or (s.review or {}).get("student_feedback", "")
+    # Подтверждает назначенный ревьюер либо методист. Проверки не было
+    # вовсе: любой ревьюер мог выставить оценку по чужой работе — при том
+    # что открыть её ему запрещено (403 в `get_submission`). Смотреть
+    # нельзя, а оценивать можно — так быть не должно.
+    if user.role == Role.REVIEWER and s.reviewer_id != user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Работа назначена другому ревьюеру. Подтвердить результат может "
+            "он или методист.",
+        )
+
+    review = dict(s.review or {})
+    criteria = review.get("criteria", [])
+
+    # Максимум балла: из результата проверки, а если её не было — из
+    # критериев задания. Без этого запаса у непроверенной работы верхняя
+    # граница оказывалась нулевой, проверка отключалась, и балл 999
+    # публиковался студенту. Ровно это и произошло на живом запросе.
+    max_score = float(review.get("max_score") or 0.0)
+    if not max_score:
+        assignment = await session.get(Assignment, s.assignment_id)
+        rubric_criteria = ((assignment.rubric or {}) if assignment else {}).get("criteria", [])
+        max_score = sum(float(c.get("max_score") or 0.0) for c in rubric_criteria)
+
+    # Баллы по критериям: каждый в своих границах. Опечатка в поле ввода
+    # уходила студенту как есть.
+    if body.criteria_scores:
+        for c in criteria:
+            new = body.criteria_scores.get(c["criterion_id"])
+            if new is None:
+                continue
+            top = float(c.get("max_score") or 0.0)
+            if new < 0 or (top and new > top):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Балл по критерию «{c.get('criterion_name', c['criterion_id'])}» "
+                    f"должен быть от 0 до {top:g}, получено {new:g}.",
+                )
+            c["score"] = new
+
+    # Итог считает сервер, а не клиент.
+    #
+    # Раньше `final_score` принимался как есть: проверено запросом — балл
+    # 999 из 20 и балл −50 публиковались студенту без единого возражения.
+    # Хуже другое: штраф за нарушение срока вычитал **интерфейс**, и при
+    # обращении к API мимо него штраф просто исчезал — при том что правило
+    # «досдача в течение суток, штраф −1 балл» взято из условия задания.
+    #
+    # Рычаг ревьюера — баллы по критериям; итог из них выводится. Поэтому
+    # при переданных баллах сервер пересчитывает сумму сам и сам вычитает
+    # штрафы.
+    penalties = sum(float(p.get("amount") or 0.0) for p in review.get("penalties", []))
+    if body.criteria_scores and criteria:
+        # Суммируются ВСЕ критерии, включая те, что модель оценить не смогла.
+        # Флаг `failed` означает «автоматика не справилась», и интерфейс прямо
+        # предлагает ревьюеру поставить балл руками — «оцените вручную».
+        # Исключать такие критерии из суммы значило бы молча выбросить
+        # выставленную человеком оценку.
+        base = sum(float(c.get("score") or 0.0) for c in criteria)
+        final_score = round(max(0.0, base - penalties), 2)
+    else:
+        final_score = body.final_score
+
+    # Жёсткий срок пройден — по правилу из условия работа оценивается в ноль.
+    # Это не мнение ревьюера и не вычитаемый штраф, а прямое требование, и
+    # соблюдать его должен сервер: до этого работа, просроченная
+    # окончательно, подтверждалась с полным баллом.
+    forced_zero = s.deadline_state == DeadlineState.LATE_ZERO
+    if forced_zero:
+        final_score = 0.0
+
+    if final_score < 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Итоговый балл не может быть отрицательным, получено {final_score:g}.",
+        )
+    if max_score and final_score > max_score:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Итоговый балл должен быть от 0 до {max_score:g}, получено {final_score:g}.",
+        )
+    if not max_score:
+        # Максимум неизвестен ни из проверки, ни из критериев — значит
+        # критерии ещё не заданы. Оценивать нечем, и лучше сказать это,
+        # чем принять любое число.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Максимальный балл неизвестен: у задания не заданы критерии. "
+            "Задайте их, иначе непонятно, из чего выставляется оценка.",
+        )
+
+    preliminary = review.get("preliminary_score")
+    s.final_score = final_score
+    s.final_feedback = body.feedback or review.get("student_feedback", "")
     s.confirmed_by = user.id
     s.confirmed_at = now_utc()
     s.status = SubmissionStatus.CONFIRMED
-    s.score_edited = preliminary is not None and abs(preliminary - body.final_score) > 1e-6
+    s.score_edited = preliminary is not None and abs(preliminary - final_score) > 1e-6
 
     if body.criteria_scores and s.review:
-        review = dict(s.review)
-        for c in review.get("criteria", []):
-            if (new := body.criteria_scores.get(c["criterion_id"])) is not None:
-                c["score"] = new
         s.review = review
 
     await log_action(
@@ -1702,17 +1863,27 @@ async def confirm(
     await notify(
         session, user_id=s.student_id, kind="review.published",
         title="Проверка завершена",
-        body=f"По работе «{s.file_name}» готова обратная связь. Балл: {body.final_score:g}.",
+        body=f"По работе «{s.file_name}» готова обратная связь. Балл: {final_score:g}.",
         submission_id=s.id, severity="success",
     )
     await session.commit()
 
     await bus.publish(
         "review_confirmed",
-        {"submission_id": s.id, "final_score": body.final_score,
+        {"submission_id": s.id, "final_score": final_score,
          "score_edited": s.score_edited},
     )
-    return {"ok": True, "final_score": body.final_score, "score_edited": s.score_edited}
+    return {
+        "ok": True,
+        "final_score": final_score,
+        "score_edited": s.score_edited,
+        # Клиент прислал одно, сервер посчитал другое — об этом надо сказать,
+        # а не молча разойтись в цифрах.
+        "client_score": body.final_score,
+        "recomputed": abs(body.final_score - final_score) > 1e-6,
+        "penalties_applied": penalties,
+        "forced_zero": forced_zero,
+    }
 
 
 class AIVerdictIn(BaseModel):

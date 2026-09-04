@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
@@ -122,10 +122,17 @@ async def refresh_submission_state(session, submission: Submission, assignment: 
 
         result = ReviewResult.model_validate(submission.review)
         if status.forces_zero:
+            # `amount` — это то, что снимается, то есть весь набранный балл.
+            # Раньше здесь стояло `result.preliminary_score` уже ПОСЛЕ
+            # обнуления, и штраф всегда записывался нулевым: в карточке
+            # значилось «−0 Жёсткий срок сдачи пройден», а при подтверждении
+            # сумма штрафов равнялась нулю — работа, которую условие велит
+            # оценить в ноль, уходила студенту с полным баллом.
+            lost = result.preliminary_score
             result.preliminary_score = 0.0
             result.penalties = [{
                 "code": "deadline", "title": "Жёсткий срок сдачи пройден",
-                "amount": result.preliminary_score, "detail": status.detail,
+                "amount": lost, "detail": status.detail,
             }]
         else:
             apply_deadline_penalty(result, penalty=status.penalty, reason=status.detail)

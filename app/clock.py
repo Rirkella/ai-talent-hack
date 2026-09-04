@@ -34,11 +34,3 @@ def as_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
-def seconds_between(later: datetime | None, earlier: datetime | None) -> float | None:
-    """Разница в секундах с безопасным приведением обеих дат."""
-    a, b = as_utc(later), as_utc(earlier)
-    if a is None or b is None:
-        return None
-    return (a - b).total_seconds()

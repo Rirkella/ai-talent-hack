@@ -62,11 +62,6 @@ class SimilarityReport:
     def for_work(self, work_id: str) -> list[PairSimilarity]:
         out = [p for p in self.pairs if work_id in (p.a_id, p.b_id)]
         return sorted(out, key=lambda p: -p.score)
-
-    def max_for(self, work_id: str) -> float:
-        pairs = self.for_work(work_id)
-        return pairs[0].score if pairs else 0.0
-
     @property
     def suspicious(self) -> list[PairSimilarity]:
         return sorted(

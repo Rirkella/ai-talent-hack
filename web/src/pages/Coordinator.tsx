@@ -23,6 +23,32 @@ import Scoring from "./Scoring";
 
 type Toast = (t: string, tone?: "info" | "ok" | "warn" | "err") => void;
 
+type Stage = "task" | "works" | "analytics" | "settings";
+
+/** Этапы работы методиста — в том порядке, в каком их проходят. */
+const STAGES: { key: Stage; title: string; hint: string }[] = [
+  {
+    key: "task",
+    title: "1. Задание",
+    hint: "Критерии оценивания и сроки. С этого начинается любое новое ДЗ.",
+  },
+  {
+    key: "works",
+    title: "2. Работы",
+    hint: "Загрузка работ, распределение по ревьюерам, запуск проверки, выгрузка итогов.",
+  },
+  {
+    key: "analytics",
+    title: "3. Аналитика",
+    hint: "Как идёт поток: воронка, баллы, слабые критерии, загрузка ревьюеров.",
+  },
+  {
+    key: "settings",
+    title: "Настройки",
+    hint: "Участники потока и формула, по которой считается порядок ручной проверки.",
+  },
+];
+
 export default function Coordinator({
   tick,
   toast,
@@ -41,6 +67,7 @@ export default function Coordinator({
   const [students, setStudents] = useState<User[]>([]);
   const [refs, setRefs] = useState<any>(null);
   const [localTick, setLocalTick] = useState(0);
+  const [stage, setStage] = useState<Stage>("task");
 
   useEffect(() => {
     api.assignments().then((rows) => {
@@ -132,38 +159,80 @@ export default function Coordinator({
 
       <HowTo />
 
+      {/*
+        Разделы разложены по этапам работы, а не свалены в одну ленту.
+        Экран методиста был высотой почти четыре тысячи пикселей: восемнадцать
+        блоков подряд, шесть развёрнутых. Найти нужный можно было только
+        прокруткой, и по виду страницы не читалось, что за чем делать.
+      */}
       {assignment && (
         <>
-          <RubricPanel assignment={assignment} toast={toast} onChanged={load} />
-          <UploadSubmissions
-            assignment={assignment}
-            students={students}
-            refs={refs}
-            toast={toast}
-            onChanged={() => {
-              load();
-              refresh();
-            }}
-          />
-          <People refs={refs} toast={toast} onChanged={bump} />
-          <DeadlinePanel assignment={assignment} toast={toast} onChanged={load} />
-          <AllocationPanel
-            assignment={assignment}
-            subs={subs}
-            reviewers={reviewers}
-            toast={toast}
-            onChanged={load}
-          />
-          <SubmissionsTable
-            subs={subs}
-            reviewers={reviewers}
-            assignment={assignment}
-            toast={toast}
-            onChanged={load}
-          />
-          <Scoring assignmentId={assignment.id} toast={toast} onChanged={load} />
-          <SimilarityPanel assignmentId={assignment.id} toast={toast} />
-          <Analytics assignmentId={assignment.id} tick={tick} />
+          <nav className="flex flex-wrap gap-1">
+            {STAGES.map(({ key, title, hint }) => (
+              <button
+                key={key}
+                className="btn"
+                onClick={() => setStage(key)}
+                title={hint}
+                style={
+                  stage === key
+                    ? { borderColor: "var(--brand)", color: "var(--brand)" }
+                    : undefined
+                }
+              >
+                {title}
+              </button>
+            ))}
+          </nav>
+          <p className="muted -mt-2 text-xs">
+            {STAGES.find((s) => s.key === stage)?.hint}
+          </p>
+
+          {stage === "task" && (
+            <>
+              <RubricPanel assignment={assignment} toast={toast} onChanged={load} />
+              <DeadlinePanel assignment={assignment} toast={toast} onChanged={load} />
+            </>
+          )}
+
+          {stage === "works" && (
+            <>
+              <UploadSubmissions
+                assignment={assignment}
+                students={students}
+                refs={refs}
+                toast={toast}
+                onChanged={() => {
+                  load();
+                  refresh();
+                }}
+              />
+              <AllocationPanel
+                assignment={assignment}
+                subs={subs}
+                reviewers={reviewers}
+                toast={toast}
+                onChanged={load}
+              />
+              <SubmissionsTable
+                subs={subs}
+                reviewers={reviewers}
+                assignment={assignment}
+                toast={toast}
+                onChanged={load}
+              />
+              <SimilarityPanel assignmentId={assignment.id} toast={toast} />
+            </>
+          )}
+
+          {stage === "analytics" && <Analytics assignmentId={assignment.id} tick={tick} />}
+
+          {stage === "settings" && (
+            <>
+              <People refs={refs} toast={toast} onChanged={bump} />
+              <Scoring assignmentId={assignment.id} toast={toast} onChanged={load} />
+            </>
+          )}
         </>
       )}
     </div>
@@ -696,6 +765,10 @@ function AllocationPanel({
   const [result, setResult] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const pending = subs.filter((s) => !s.reviewer_id).length;
+  // В счётчике только те работы, которые реально уйдут в очередь. Раньше
+  // считались все строки, включая нагрузку прошлого потока без файла:
+  // кнопка обещала «Проверить все (6)», а в очередь уходило три.
+  const checkable = subs.filter((s) => s.has_file !== false).length;
 
   return (
     <Section
@@ -704,8 +777,8 @@ function AllocationPanel({
         <div className="flex flex-wrap gap-2">
           <button
             className="btn"
-            disabled={!assignment.rubric_approved}
-            title={assignment.rubric_approved ? "" : "Сначала утвердите рубрику"}
+            disabled={!assignment.rubric_approved || checkable === 0}
+            title={assignment.rubric_approved ? "" : "Сначала утвердите критерии оценивания"}
             onClick={() =>
               api
                 .reviewAll(assignment.id)
@@ -714,7 +787,7 @@ function AllocationPanel({
                 .catch((e) => toast(String(e.message ?? e), "err"))
             }
           >
-            Проверить все ({subs.length})
+            Проверить все ({checkable})
           </button>
           <button
             className="btn btn-primary"
@@ -738,11 +811,64 @@ function AllocationPanel({
       }
     >
       <p className="muted mb-3 text-xs">
-        Венгерский алгоритм на матрице «работа × слот ревьюера». Стоимость учитывает
-        компетенцию, текущую загрузку относительно ёмкости, срочность и трудоёмкость.
-        Это точный оптимум, а не эвристика «раздать поровну».
+        Каждая работа уходит <b>одному</b> ревьюеру. Кому именно — решает
+        венгерский алгоритм: он перебирает не работы по очереди, а все
+        сочетания сразу и выбирает то, где суммарная «стоимость» наименьшая.
+        В стоимость входят компетенция по направлению, текущая загрузка
+        относительно ёмкости, срочность и объём работы. Это точный оптимум
+        задачи о назначении, а не эвристика «раздать поровну».
       </p>
 
+      {/*
+        Список назначений — то, ради чего нажимают кнопку. Раньше здесь были
+        только столбики нагрузки по всем ревьюерам и два агрегата, а сам
+        ответ «работа → ревьюер» приходил с сервера и выбрасывался. Со
+        стороны это читалось так, будто одна работа ушла ко всем сразу.
+      */}
+      {result?.allocations?.length > 0 && (
+        <div className="mb-3">
+          <div className="mb-1 text-sm font-medium">Кто что получил</div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b text-left muted" style={{ borderColor: "var(--border)" }}>
+                <th className="py-1 font-normal">Работа</th>
+                <th className="py-1 font-normal">Ревьюер</th>
+                <th className="py-1 font-normal">Почему он</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.allocations.map((al: any) => {
+                const work = subs.find((s) => s.id === al.work_id);
+                const reviewer = reviewers.find((r) => r.id === al.reviewer_id);
+                return (
+                  <tr key={al.work_id} className="border-b last:border-0"
+                      style={{ borderColor: "var(--border)" }}>
+                    <td className="py-1 pr-2">
+                      <div>{work?.student_name ?? al.work_id}</div>
+                      <div className="muted truncate" title={work?.file_name}>
+                        {work?.file_name}
+                      </div>
+                    </td>
+                    <td className="py-1 pr-2">
+                      {reviewer?.name ?? (
+                        <span style={{ color: "var(--err)" }}>не назначен</span>
+                      )}
+                    </td>
+                    <td className="py-1 muted">{(al.reasons ?? []).join("; ")}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="mb-1 text-sm font-medium">Загрузка ревьюеров</div>
+      <p className="muted mb-2 text-xs">
+        Столбик на каждого ревьюера: сколько работ у него было и сколько
+        стало. Ревьюеры, которым ничего не досталось, показаны тоже — чтобы
+        было видно, что свободные силы остались.
+      </p>
       <LoadChart
         reviewers={reviewers}
         before={result?.load_before}

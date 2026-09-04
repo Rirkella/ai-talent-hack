@@ -162,3 +162,39 @@ def test_weights_are_configurable() -> None:
 
     assert strong.priority_index > weak.priority_index
     assert strong.preliminary_score == weak.preliminary_score
+
+
+# ── границы настроек формулы ──────────────────────────────────────────────────
+
+
+def test_weights_outside_zero_one_are_refused() -> None:
+    """Отрицательный вес переворачивает смысл очереди.
+
+    API принимал любое число: вес −5 и вес 99 сохранялись молча. При
+    отрицательном весе работа с признаками генеративного ИИ опускалась бы
+    в самый низ очереди — ровно туда, где её никто не смотрит.
+    """
+    from app.api.routes import _scoring, set_scoring  # noqa: F401
+    from fastapi.testclient import TestClient
+
+    from app.api.deps import current_user
+    from app.main import app
+    from app.models import Role, User
+
+    app.dependency_overrides[current_user] = lambda: User(
+        id="coord-1", name="Методист", role=Role.COORDINATOR
+    )
+    client = TestClient(app)
+    try:
+        for bad in (-5, 1.5, 99):
+            r = client.put("/api/scoring", json={"weights": {"ai_signal": bad}})
+            assert r.status_code == 400, f"вес {bad} принят"
+            assert "от 0 до 1" in r.json()["detail"]
+
+        # Опечатка в имени тоже отвергается: раньше она оседала в настройках
+        # мёртвым грузом, и методист думал, что настроил, а не менялось ничего.
+        r = client.put("/api/scoring", json={"weights": {"ai_signal_typo": 0.5}})
+        assert r.status_code == 400
+        assert "Неизвестный вес" in r.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()

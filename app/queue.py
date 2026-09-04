@@ -85,7 +85,30 @@ class ReviewQueue:
                 log.info("возвращено в очередь заданий: %d", len(rows))
 
     async def enqueue(self, submission_id: str) -> str:
-        """Ставит работу в очередь. Возвращает id задания."""
+        """Ставит работу в очередь. Возвращает id задания.
+
+        Повторная постановка той же работы возвращает уже существующее
+        задание, а не заводит второе. Без этого два нажатия «Проверить»
+        подряд отправляли одну работу модели дважды: минута видеокарты
+        впустую, а на выходе — гонка двух воркеров за одну и ту же запись
+        результата. Кнопка блокируется на время запроса, но защита от
+        двойного клика не может жить только в интерфейсе.
+        """
+        async with session_scope() as session:
+            existing = (
+                await session.execute(
+                    select(Job)
+                    .where(
+                        Job.submission_id == submission_id,
+                        Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+                    )
+                    .order_by(Job.created_at.desc())
+                )
+            ).scalars().first()
+            if existing is not None:
+                log.info("работа %s уже в очереди, задание %s", submission_id, existing.id)
+                return existing.id
+
         job_id = str(uuid.uuid4())
         async with session_scope() as session:
             session.add(Job(id=job_id, submission_id=submission_id, status=JobStatus.QUEUED))

@@ -24,7 +24,7 @@
 | **Доказательства** | 88 % цитат подтверждены кодом, а не моделью |
 | **Время ревью** | ≈ 45 с на работу, в фоне |
 | **Ручных действий** | было 11 на работу, стало 3 (измерено по журналу: 33 → 10 на потоке) |
-| **Тесты** | 181, проходят за 7 с (включая 8 smoke-тестов на живой модели) |
+| **Тесты** | 197, проходят за 7 с (включая 8 smoke-тестов на живой модели) |
 | **Разбор примеров кейса** | шесть каталогов ДЗ читаются без ошибок; поддержан 31 формат — `.docx`, `.pdf`, `.xlsx`, `.md`, `.ipynb`, исходный код и `.zip` с репозиторием |
 | **Внешних вызовов в рантайме** | 0 |
 
@@ -151,13 +151,18 @@ powershell -ExecutionPolicy Bypass -File scripts\fetch_examples.ps1 -Folders tec
 ```
 
 Дальше всё делается в интерфейсе: «+ Новое задание» → загрузка условия →
-утверждение рубрики → «Загрузка работ». Все 63 файла шести каталогов
-(`.docx`, `.pdf`, `.xlsx`, `.md`) читаются приложением без ошибок.
+утверждение критериев → «Загрузка работ».
+
+`python scripts/make_samples.py` раскладывает из выгрузки удобный набор:
+восемь курсов, 83 файла (`.docx`, `.pdf`, `.xlsx`, `.md`, `.ipynb`, `.zip`).
+Все читаются приложением без ошибок; четыре дают почти пустой текст, и это
+верное поведение — среди них скан без текстового слоя, который система
+обязана отвергнуть, а не оценивать.
 
 ## Как это работает
 
 ```
-условие ──▶ рубрика (модель + регулярки) ──▶ [МЕТОДИСТ УТВЕРЖДАЕТ]
+условие ──▶ критерии (модель + регулярки) ──▶ [МЕТОДИСТ УТВЕРЖДАЕТ]
                                                      │
 работа ──▶ Document с блоками §1, §2, …              │
               │                                      │
@@ -264,7 +269,8 @@ Celery, внешние API), — в [`docs/architecture.md`](docs/architecture.m
 
 ```
 app/
-  main.py config.py db.py models.py clock.py events.py queue.py seed.py cli.py
+  main.py config.py db.py models.py clock.py events.py queue.py auth.py
+  seed.py cli.py
   api/        deps.py routes.py
   ingest/     document.py docx_reader.py pdf_reader.py xlsx_reader.py
               code_reader.py archive_reader.py loader.py
@@ -284,7 +290,7 @@ web/          src/ + dist/ (собран, коммитится — на демо
                           Scoring Quality Privacy StudentProfile Login
 scripts/      setup.ps1 run.ps1 ollama_setup.ps1 fetch_examples.ps1 Modelfile.*
 docs/
-tests/        181 тест
+tests/        197 тестов
 ```
 
 ## Известные ловушки окружения

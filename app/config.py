@@ -98,11 +98,6 @@ class Settings(BaseSettings):
         Иначе запуск `uvicorn` из другой директории создаёт вторую базу.
         """
         return v if v.is_absolute() else (PROJECT_ROOT / v).resolve()
-
-    @property
-    def examples_dir(self) -> Path:
-        return self.data_dir / "examples"
-
     @property
     def is_local_llm(self) -> bool:
         """True, если LLM обслуживается внутри контура.

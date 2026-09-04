@@ -74,7 +74,10 @@ def client(tmp_path):
             yield session
 
     app.dependency_overrides[get_session] = override
-    yield TestClient(app)
+    test_client = TestClient(app)
+    # Фабрика сессий нужна тестам, которые готовят состояние прямо в базе.
+    test_client.maker = maker  # type: ignore[attr-defined]
+    yield test_client
     app.dependency_overrides.clear()
 
 
@@ -225,3 +228,296 @@ def test_submission_without_assignment_or_title_is_refused(client) -> None:
     )
     assert r.status_code == 400
     assert "название" in r.json()["detail"].lower()
+
+
+# ── подтверждение результата ──────────────────────────────────────────────────
+
+
+REVIEWED = {
+    "preliminary_score": 7.0,
+    "max_score": 10.0,
+    "criteria": [
+        {"criterion_id": "c1", "criterion_name": "Первый", "score": 4.0, "max_score": 5.0},
+        {"criterion_id": "c2", "criterion_name": "Второй", "score": 3.0, "max_score": 5.0},
+    ],
+    "penalties": [
+        {"code": "deadline", "title": "Нарушение срока сдачи", "amount": 1.0,
+         "detail": "досдача в течение суток"},
+    ],
+    "student_feedback": "разбор работы",
+}
+
+
+@pytest.fixture
+def confirmable(client):
+    """Работа с готовой проверкой, назначенная конкретному ревьюеру."""
+    import asyncio as aio
+
+    async def prepare():
+        async with client.maker() as s:
+            s.add(User(id="rev-1", name="Свой Ревьюер", role=Role.REVIEWER))
+            s.add(User(id="rev-2", name="Чужой Ревьюер", role=Role.REVIEWER))
+            work = await s.get(Submission, "ok")
+            work.reviewer_id = "rev-1"
+            work.review = REVIEWED
+            await s.commit()
+
+    aio.run(prepare())
+    return client
+
+
+def _confirm(client, body, user):
+    return client.post(
+        "/api/submissions/ok/confirm", json=body, headers={"X-User-Id": user}
+    )
+
+
+def test_score_above_maximum_is_refused(confirmable) -> None:
+    """Балл 999 из 10 публиковался студенту без единого возражения."""
+    r = _confirm(confirmable, {"final_score": 999, "feedback": "x"}, "rev-1")
+    assert r.status_code == 400
+    assert "от 0 до 10" in r.json()["detail"]
+
+
+def test_negative_score_is_refused(confirmable) -> None:
+    r = _confirm(confirmable, {"final_score": -50, "feedback": "x"}, "rev-1")
+    assert r.status_code == 400
+    assert "отрицательным" in r.json()["detail"]
+
+
+def test_another_reviewer_cannot_confirm(confirmable) -> None:
+    """Смотреть чужую работу нельзя, а оценивать было можно.
+
+    `get_submission` отдавал 403 чужому ревьюеру, а `confirm` не проверял
+    ничего: любой ревьюер мог выставить оценку по чужой работе.
+    """
+    assert _confirm(confirmable, {"final_score": 5, "feedback": "x"}, "rev-2").status_code == 403
+    assert _confirm(confirmable, {"final_score": 5, "feedback": "x"}, "rev-1").status_code == 200
+
+
+def test_coordinator_may_confirm_any_work(confirmable) -> None:
+    """Методист — старший над потоком, ему можно."""
+    assert _confirm(confirmable, {"final_score": 5, "feedback": "x"}, "coord-1").status_code == 200
+
+
+def test_criterion_score_above_its_maximum_is_refused(confirmable) -> None:
+    r = _confirm(
+        confirmable,
+        {"final_score": 9, "feedback": "x", "criteria_scores": {"c1": 99}},
+        "rev-1",
+    )
+    assert r.status_code == 400
+    assert "Первый" in r.json()["detail"]
+
+
+def test_deadline_penalty_cannot_be_lost(confirmable) -> None:
+    """Штраф вычитал интерфейс — при обращении к API он просто исчезал.
+
+    Правило «досдача в течение суток, штраф −1 балл» взято из условия
+    задания, а не из мнения ревьюера. Поэтому итог считает сервер: сумма
+    баллов по критериям минус штрафы.
+    """
+    r = _confirm(
+        confirmable,
+        # Клиент «забыл» вычесть штраф и прислал полную сумму 4 + 3.
+        {"final_score": 7, "feedback": "x", "criteria_scores": {"c1": 4, "c2": 3}},
+        "rev-1",
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["final_score"] == 6.0, "штраф не применён"
+    assert body["recomputed"] is True
+    assert body["penalties_applied"] == 1.0
+
+
+def test_work_past_the_hard_deadline_is_confirmed_with_zero(confirmable) -> None:
+    """Правило условия: не сдано в срок — ноль баллов. Оно терялось дважды.
+
+    Планировщик обнулял предварительный балл, но запись о штрафе получала
+    `amount` уже ПОСЛЕ обнуления, то есть всегда ноль. Интерфейс вычитал
+    из суммы по критериям этот ноль, отправлял полную сумму, и сервер
+    принимал её без возражений: работа, которую условие велит оценить в
+    ноль, уходила студенту с полным баллом.
+    """
+    import asyncio as aio
+
+    from app.models import DeadlineState
+
+    async def overdue():
+        async with confirmable.maker() as s:
+            work = await s.get(Submission, "ok")
+            work.deadline_state = DeadlineState.LATE_ZERO
+            await s.commit()
+
+    aio.run(overdue())
+
+    r = _confirm(
+        confirmable,
+        {"final_score": 7, "feedback": "x", "criteria_scores": {"c1": 4, "c2": 3}},
+        "rev-1",
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["final_score"] == 0.0, "жёсткий срок пройден, а балл не обнулён"
+    assert body["forced_zero"] is True
+
+
+def test_zero_penalty_record_keeps_the_lost_score(tmp_path) -> None:
+    """Запись о штрафе должна называть снятый балл, а не ноль."""
+    import asyncio as aio
+    from datetime import timedelta
+
+    from app.clock import now as now_utc
+    from app.models import Assignment as A, Submission as S
+    from app.notify.scheduler import refresh_submission_state
+
+    review = {
+        "submission_id": "x", "preliminary_score": 8.0, "max_score": 10.0,
+        "criteria": [], "formal": [], "penalties": [], "warnings": [],
+        "trace": [], "priority_index": 0.0, "priority_reasons": [],
+        "student_feedback": "", "reviewer_summary": "", "duration_ms": 0,
+        "model": "test",
+    }
+    now = now_utc()
+    assignment = A(id="a", title="ДЗ", track="product_fraud",
+                   due_at=now - timedelta(days=3), hard_due_at=now - timedelta(days=2),
+                   review_due_at=now + timedelta(days=5), rubric={})
+    sub = S(id="s", assignment_id="a", student_id="u", file_path="/tmp/x.md",
+            file_name="x.md", track="product_fraud",
+            submitted_at=now - timedelta(days=1), review=review)
+
+    # Сессия нужна функции только для записи уведомлений. Настоящая база
+    # здесь ни при чём: проверяется арифметика штрафа.
+    class Collector:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+
+        def add(self, obj: object) -> None:
+            self.added.append(obj)
+
+        async def flush(self) -> None:
+            return None
+
+    aio.run(refresh_submission_state(Collector(), sub, assignment))
+
+    assert sub.review["preliminary_score"] == 0.0
+    penalty = sub.review["penalties"][0]
+    assert penalty["amount"] == 8.0, f"штраф записан как {penalty['amount']}, а снято 8 баллов"
+
+
+def test_double_click_does_not_queue_the_same_work_twice(client) -> None:
+    """Два нажатия «Проверить» подряд отправляли работу модели дважды.
+
+    Минута видеокарты впустую и гонка двух воркеров за одну запись
+    результата. Кнопка блокируется на время запроса, но защита от двойного
+    клика не может жить только в интерфейсе.
+    """
+    first = client.post("/api/submissions/ok/review", headers=COORD)
+    second = client.post("/api/submissions/ok/review", headers=COORD)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["job_id"] == second.json()["job_id"], "заведено второе задание"
+
+
+def test_manual_score_for_a_failed_criterion_counts(confirmable) -> None:
+    """Критерий, который модель не смогла оценить, ревьюер оценивает сам.
+
+    Интерфейс прямо предлагает: «оцените вручную». Сервер же суммировал
+    только критерии без флага `failed` — выставленный человеком балл молча
+    выбрасывался из итога.
+    """
+    import asyncio as aio
+
+    async def break_one():
+        async with confirmable.maker() as s:
+            work = await s.get(Submission, "ok")
+            review = dict(REVIEWED)
+            review["criteria"] = [
+                dict(REVIEWED["criteria"][0]),
+                dict(REVIEWED["criteria"][1], failed=True, score=0.0,
+                     error="модель не ответила"),
+            ]
+            review["penalties"] = []
+            work.review = review
+            work.reviewer_id = "rev-1"
+            await s.commit()
+
+    aio.run(break_one())
+
+    r = _confirm(
+        confirmable,
+        {"final_score": 9, "feedback": "x", "criteria_scores": {"c1": 4, "c2": 5}},
+        "rev-1",
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["final_score"] == 9.0, "балл за неоценённый критерий потерян"
+
+
+# ── загрузка работы: вредные входы ────────────────────────────────────────────
+
+
+def _upload(client, *, student="stu-1", name="работа.md", content=None, **extra):
+    """Загрузка работы. `content=None` — осмысленный текст по умолчанию.
+
+    Именно `None`, а не пустые байты: `b"" or default` подставил бы текст
+    вместо пустого файла, и проверка пустого файла ничего бы не проверяла.
+    """
+    default = ("# Решение\n\n" + "Осмысленный текст работы. " * 20).encode("utf-8")
+    return client.post(
+        "/api/submissions",
+        data={"assignment_id": "asg", "student_id": student,
+              "track": "product_fraud", **extra},
+        files={"file": (name, default if content is None else content, "text/markdown")},
+        headers=COORD,
+    )
+
+
+def test_empty_file_is_refused(client) -> None:
+    """Пустой файл — промах мышью, а не работа."""
+    r = _upload(client, name="пусто.md", content=b"")
+    assert r.status_code == 400
+    assert "пуст" in r.json()["detail"].lower()
+
+
+def test_unknown_student_is_refused(client) -> None:
+    """Внешний ключ SQLite не соблюдает — проверять надо явно.
+
+    Работа заводилась на несуществующего пользователя и висела в потоке
+    ничьей: в интерфейсе вместо имени показывался идентификатор.
+    """
+    r = _upload(client, student="net-takogo")
+    assert r.status_code == 400
+    assert "студент" in r.json()["detail"].lower()
+
+
+def test_reviewer_cannot_be_passed_as_the_author(client) -> None:
+    """Роль тоже проверяется, а не только существование записи."""
+    import asyncio as aio
+
+    async def add_reviewer():
+        async with client.maker() as s:
+            s.add(User(id="rev-x", name="Ревьюер", role=Role.REVIEWER))
+            await s.commit()
+
+    aio.run(add_reviewer())
+    assert _upload(client, student="rev-x").status_code == 400
+
+
+def test_path_in_the_file_name_is_stripped(client) -> None:
+    """Имя из запроса попадает в интерфейс и в выгрузку.
+
+    Путь на диске генерируется сам, подмены каталога быть не может, но
+    `../../../etc/passwd.md` сохранялось как есть и показывалось человеку.
+    """
+    r = _upload(client, name="../../../etc/passwd.md")
+    assert r.status_code == 200, r.text
+    rows = {s["id"]: s for s in client.get("/api/submissions", headers=COORD).json()}
+    assert rows[r.json()["submission_id"]]["file_name"] == "passwd.md"
+
+
+def test_absurdly_long_file_name_is_trimmed(client) -> None:
+    """Колонка в базе — 300 символов; SQLite длину не проверяет, а другая СУБД проверит."""
+    r = _upload(client, name="и" * 400 + ".md")
+    assert r.status_code == 200, r.text
+    rows = {s["id"]: s for s in client.get("/api/submissions", headers=COORD).json()}
+    assert len(rows[r.json()["submission_id"]]["file_name"]) <= 200

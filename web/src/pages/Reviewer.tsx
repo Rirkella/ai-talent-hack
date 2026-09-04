@@ -142,7 +142,7 @@ export default function Reviewer({
                     {s.preliminary_score} / {s.max_score}
                   </span>
                 </div>
-                <Bar value={s.preliminary_score} max={s.max_score ?? 10} />
+                <Bar value={s.preliminary_score} max={s.max_score || 1} />
               </div>
             )}
             {s.failed_steps?.length > 0 && (
@@ -224,14 +224,21 @@ function SubmissionCard({
     setHighlight(null);
   }, [detail.id, review]);
 
+  // Жёсткий срок пройден — по правилу из условия работа оценивается в ноль,
+  // сколько бы баллов ни набрали критерии. Это решает сервер; интерфейс
+  // обязан показывать то же самое, иначе ревьюер увидит одно число, а
+  // студент получит другое.
+  const forcedZero = detail.deadline_state === "late_zero";
+
   const total = useMemo(() => {
+    if (forcedZero) return 0;
     const sum = Object.values(scores).reduce((a, b) => a + b, 0);
     const penalties = (review?.penalties ?? []).reduce(
       (a: number, p: any) => a + (p.amount ?? 0),
       0,
     );
     return Math.max(0, sum - penalties);
-  }, [scores, review]);
+  }, [scores, review, forcedZero]);
 
   if (!review) {
     return (
@@ -534,6 +541,14 @@ function SubmissionCard({
               <span className="ml-2" style={{ color: "var(--warn)" }}>
                 изменён (было {review.preliminary_score})
               </span>
+            )}
+            {forcedZero && (
+              <div className="mt-1 text-xs" style={{ color: "var(--err)" }}>
+                Жёсткий срок сдачи пройден: по правилу из условия работа
+                оценивается в ноль баллов независимо от содержания. Баллы по
+                критериям сохраняются в разборе — студент увидит, что именно
+                было сделано.
+              </div>
             )}
           </div>
           <div className="ml-auto flex gap-2">

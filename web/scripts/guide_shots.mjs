@@ -69,6 +69,14 @@ async function open(title) {
   return true;
 }
 
+/** Переключает вкладку этапа у методиста. */
+async function stage(title) {
+  const tab = page.getByRole("button", { name: title, exact: true });
+  if ((await tab.count()) === 0) return;
+  await tab.first().click();
+  await page.waitForTimeout(1200);
+}
+
 async function shotSection(file, title, note) {
   if (title && !(await open(title))) {
     console.log(`  ${file}.png — пропущен: нет секции «${title}»`);
@@ -117,13 +125,18 @@ if ((await hint.count()) > 0) {
 
 // ── шаг 2: методист ───────────────────────────────────────────────────────────
 await login("coordinator");
-await shotPage("03-metodist", "экран методиста целиком");
+await shotPage("03-metodist", "экран методиста: вкладки этапов");
 await shotSection("04-poryadok", "С чего начать", "порядок действий");
 await shotSection("05-kriterii", "Критерии оценивания", "критерии из условия, кнопка утверждения");
-await shotSection("06-zagruzka", "Загрузка работ", "загрузка пачкой");
 await shotSection("07-sroki", "Сроки и штрафы", "три срока и режим демонстрации");
-await shotSection("08-raspredelenie", "Распределение по ревьюерам", "нагрузка и «Проверить все»");
+
+await stage("2. Работы");
+await shotSection("06-zagruzka", "Загрузка работ", "загрузка пачкой");
+await shotSection("08-raspredelenie", "Распределение по ревьюерам", "кто что получил и нагрузка");
 await shotSection("09-raboty", "Работы", "таблица работ и выгрузка");
+
+await stage("Настройки");
+await shotSection("09b-formula", "Формула приоритета", "веса порядка ручной проверки");
 
 // ── шаг 3: ревьюер ────────────────────────────────────────────────────────────
 // Ревьюер второго курса: именно у него в очереди лежат проверенные
@@ -152,6 +165,10 @@ await shotSection("17-sdat", "Сдать работу", "форма сдачи, 
 await shotPage("18-student", "экран студента целиком");
 
 // ── шаг 5: качество и приватность ─────────────────────────────────────────────
+await login("coordinator");
+await stage("3. Аналитика");
+await shotSection("18b-analitika", "Аналитика потока", "воронка и распределение баллов");
+
 await login("coordinator", "Качество");
 await shotSection("19-effekt", "Эффект: измеримые показатели", "показатели из критериев кейса");
 await shotSection("20-kachestvo", "Насколько точно система оценивает работы", "результаты бенчмарка");

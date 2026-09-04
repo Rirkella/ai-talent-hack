@@ -473,17 +473,3 @@ def run_checks(
             out.append(CheckResult(code, title, Status.UNKNOWN,
                                    f"Проверка не выполнена: {type(exc).__name__}: {exc}"))
     return out
-
-
-def summarize(results: list[CheckResult]) -> dict[str, object]:
-    counts = {s.value: sum(1 for r in results if r.status is s) for s in Status}
-    return {
-        "counts": counts,
-        "violations": [r.code for r in results if r.is_violation],
-        "unknown": [r.code for r in results if r.status is Status.UNKNOWN],
-        "total": len(results),
-    }
-
-
-def registered_codes() -> list[str]:
-    return list(_REGISTRY)

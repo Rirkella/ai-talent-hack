@@ -115,14 +115,6 @@ class AllocationResult:
     @property
     def max_load_after(self) -> int:
         return max(self.load_after.values(), default=0)
-
-    def utilization_after(self, reviewers: list[ReviewerLoad]) -> dict[str, float]:
-        return {
-            r.id: (self.load_after.get(r.id, 0) / r.capacity if r.capacity else 1.0)
-            for r in reviewers
-        }
-
-
 def _cost(
     work: WorkItem,
     reviewer: ReviewerLoad,

@@ -71,7 +71,7 @@ export default function Student({
                   <div className="muted text-xs">оценка</div>
                   <div className="text-2xl font-semibold tabular-nums">
                     {s.final_score}
-                    <span className="muted text-base"> / {s.max_score ?? 10}</span>
+                    <span className="muted text-base"> / {s.max_score ?? "—"}</span>
                   </div>
                 </>
               ) : (

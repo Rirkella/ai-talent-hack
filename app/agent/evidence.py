@@ -106,19 +106,3 @@ def verify_all(
         verify_evidence(Evidence(block=ev.block, quote=ev.quote), doc) for ev in evidence
     ]
     return checked, sum(1 for e in checked if e.is_verified)
-
-
-def explain(ev: Evidence) -> str:
-    """Человекочитаемое пояснение статуса — попадает в интерфейс ревьюера."""
-    match ev.status:
-        case EvidenceStatus.VERIFIED:
-            return f"подтверждено в §{ev.found_in_block} (схожесть {ev.similarity:g}%)"
-        case EvidenceStatus.WRONG_BLOCK:
-            return (
-                f"текст найден, но в §{ev.found_in_block}, а не в §{ev.block} "
-                f"(схожесть {ev.similarity:g}%)"
-            )
-        case EvidenceStatus.NO_BLOCK:
-            return f"блока §{ev.block} в работе нет"
-        case _:
-            return f"в работе не найдено (лучшая схожесть {ev.similarity:g}%)"
