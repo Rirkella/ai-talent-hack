@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.agent.pipeline import run_review
+from app.agent.schemas import ReviewResult
 from app.config import settings
 from app.db import session_scope
 from app.events import bus
@@ -30,6 +31,43 @@ from app.models import Assignment, Job, JobStatus, Submission, SubmissionStatus
 from app.rubric.models import Rubric
 
 log = logging.getLogger(__name__)
+
+
+async def save_review_result(
+    session,  # noqa: ANN001
+    submission: Submission,
+    result: ReviewResult,
+    assignment: Assignment | None,
+) -> ReviewResult:
+    """Записывает результат проверки и сразу приводит его в согласие со сроками.
+
+    Отдельной функцией, а не строчками внутри воркера, по одной причине:
+    именно здесь пряталась потеря штрафа, и проверять надо тот код, который
+    работает, а не его копию в тесте.
+
+    Пайплайн о сроках ничего не знает и возвращает балл без штрафа.
+    Планировщик применял штраф только в момент **смены** состояния, поэтому
+    повторный запуск ревью по уже просроченной работе возвращал полный балл
+    и так и оставался: 8 вместо 7. Теперь правило применяется в тот же
+    момент, когда результат попадает в базу.
+    """
+    submission.review = result.model_dump(mode="json")
+    submission.ai_score = float((result.ai_signal or {}).get("score", 0.0))
+    submission.priority_index = result.priority_index
+
+    # Работа с уже опубликованной оценкой остаётся подтверждённой. Повторная
+    # проверка обновляет разбор автоматики, но не отменяет решение человека:
+    # иначе карточка показывала «проверено автоматикой» у работы, балл
+    # которой студент уже видит, и было непонятно, действует он или нет.
+    if submission.confirmed_at is None:
+        submission.status = SubmissionStatus.AI_REVIEWED
+
+    if assignment is not None:
+        from app.notify.scheduler import apply_deadline_rules
+
+        apply_deadline_rules(submission, assignment)
+        result = ReviewResult.model_validate(submission.review)
+    return result
 
 
 class ReviewQueue:
@@ -234,10 +272,8 @@ class ReviewQueue:
                 job.stage = "готово"
                 job.finished_at = datetime.now(timezone.utc)
             if sub:
-                sub.review = result.model_dump(mode="json")
-                sub.ai_score = float((result.ai_signal or {}).get("score", 0.0))
-                sub.priority_index = result.priority_index
-                sub.status = SubmissionStatus.AI_REVIEWED
+                assignment = await session.get(Assignment, sub.assignment_id)
+                result = await save_review_result(session, sub, result, assignment)
             await session.commit()
             reviewer_id = sub.reviewer_id if sub else None
 
@@ -251,6 +287,11 @@ class ReviewQueue:
                 "ai_score": float((result.ai_signal or {}).get("score", 0.0)),
                 "failed_steps": result.failed_steps,
             },
+            # Только сотрудникам. Событие несёт предварительный балл, а
+            # рассылалось всем подряд: у студента с открытой вкладкой
+            # всплывало «Проверка выполнена: 5.5 из 10» — оценка, которую
+            # человек ещё не подтверждал и, возможно, не подтвердит.
+            roles=["reviewer", "coordinator"],
         )
 
         if reviewer_id:

@@ -5,7 +5,7 @@
  * было вести сверху вниз без переключений.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 
 import { api, download, type User } from "../api";
 import {
@@ -14,11 +14,14 @@ import {
   Bar,
   Countdown,
   Empty,
+  Hint,
   Section,
   Spinner,
+  StatusBadge,
 } from "../components/ui";
 import Analytics from "./Analytics";
 import { CreateAssignment, People, UploadSubmissions } from "./Manage";
+import Privacy from "./Privacy";
 import Scoring from "./Scoring";
 
 type Toast = (t: string, tone?: "info" | "ok" | "warn" | "err") => void;
@@ -45,7 +48,9 @@ const STAGES: { key: Stage; title: string; hint: string }[] = [
   {
     key: "settings",
     title: "Настройки",
-    hint: "Участники потока и формула, по которой считается порядок ручной проверки.",
+    hint:
+      "Участники потока, формула порядка ручной проверки и отчёт о защите " +
+      "данных. Это управление стендом, а не работа с ДЗ.",
   },
 ];
 
@@ -231,6 +236,18 @@ export default function Coordinator({
             <>
               <People refs={refs} toast={toast} onChanged={bump} />
               <Scoring assignmentId={assignment.id} toast={toast} onChanged={load} />
+              {/*
+                Отчёт о защите данных. Вкладкой в шапке он висел у всех
+                ролей, хотя ревьюеру не нужен ни разу за проверку работы:
+                это состояние контура, то есть настройка стенда.
+                Своей обёртки-карточки не получает — внутри уже карточки,
+                и вложение дало бы рамку в рамке.
+              */}
+              <div className="mt-1 flex items-center gap-2">
+                <h3 className="font-semibold">Защита данных и офлайн-контур</h3>
+                <Hint text="Сколько персональных данных заменено псевдонимами перед отправкой в модель и сколько было обращений за пределы контура. Отвечает на вопрос «куда уходят работы студентов» — никуда." />
+              </div>
+              <Privacy tick={tick} />
             </>
           )}
         </>
@@ -340,6 +357,14 @@ export function RubricPanel({
   return (
     <Section
       title="Критерии оценивания"
+      hint={
+        <>
+          Критерии — это то, за что выставляются баллы. Задать их можно тремя
+          способами: загрузить файл условия, написать требования текстом или
+          править вручную. Пока критерии не утверждены, проверка не
+          запускается: ошибка в критериях исказила бы все баллы разом.
+        </>
+      }
       right={
         <div className="flex flex-wrap items-center gap-2">
           {canApprove && !assignment.rubric_approved && criteria.length > 0 && (
@@ -378,13 +403,6 @@ export function RubricPanel({
         </div>
       }
     >
-      <p className="muted mb-3 text-xs">
-        Критерии — это то, за что выставляются баллы. Задать их можно тремя
-        способами: загрузить файл условия, написать требования текстом или
-        править вручную. Пока критерии не утверждены, проверка не запускается:
-        ошибка в критериях исказила бы все баллы разом.
-      </p>
-
       {textMode && (
         <div className="mb-3 rounded p-3" style={{ background: "var(--surface-2)" }}>
           <div className="mb-1 text-sm font-medium">Требования текстом</div>
@@ -632,14 +650,16 @@ function DeadlinePanel({
   return (
     <Section
       title="Сроки и штрафы"
-      hint="Дедлайн сдачи, окно опоздания и правило штрафа из условия. Отсюда же берутся напоминания."
+      hint={
+        <>
+          Дедлайн сдачи, окно опоздания и правило штрафа из условия — отсюда же
+          берутся напоминания. Правило взято из условия задания: досдача в
+          течение суток — штраф −1 балл, после жёсткого срока — 0 баллов.
+          Системные часы не подкручиваются: время настоящее, двигаются только
+          сами сроки.
+        </>
+      }
     >
-      <p className="muted mb-3 text-xs">
-        Правило взято из условия задания: досдача в течение суток — штраф −1 балл, после
-        жёсткого срока — 0 баллов. Системные часы не подкручиваются: время настоящее,
-        двигаются только сами сроки.
-      </p>
-
       <table className="w-full text-sm">
         <tbody>
           {rows.map(([field, title, hint]) => (
@@ -773,6 +793,16 @@ function AllocationPanel({
   return (
     <Section
       title="Распределение по ревьюерам"
+      hint={
+        <>
+          Каждая работа уходит <b>одному</b> ревьюеру. Кому именно — решает
+          венгерский алгоритм: он перебирает не работы по очереди, а все
+          сочетания сразу и выбирает то, где суммарная «стоимость»
+          наименьшая. В стоимость входят компетенция по направлению,
+          текущая загрузка относительно ёмкости, срочность и объём работы.
+          Кто что получил — в таблице ниже, а не в общей сводке.
+        </>
+      }
       right={
         <div className="flex flex-wrap gap-2">
           <button
@@ -810,15 +840,6 @@ function AllocationPanel({
         </div>
       }
     >
-      <p className="muted mb-3 text-xs">
-        Каждая работа уходит <b>одному</b> ревьюеру. Кому именно — решает
-        венгерский алгоритм: он перебирает не работы по очереди, а все
-        сочетания сразу и выбирает то, где суммарная «стоимость» наименьшая.
-        В стоимость входят компетенция по направлению, текущая загрузка
-        относительно ёмкости, срочность и объём работы. Это точный оптимум
-        задачи о назначении, а не эвристика «раздать поровну».
-      </p>
-
       {/*
         Список назначений — то, ради чего нажимают кнопку. Раньше здесь были
         только столбики нагрузки по всем ревьюерам и два агрегата, а сам
@@ -863,12 +884,18 @@ function AllocationPanel({
         </div>
       )}
 
-      <div className="mb-1 text-sm font-medium">Загрузка ревьюеров</div>
-      <p className="muted mb-2 text-xs">
-        Столбик на каждого ревьюера: сколько работ у него было и сколько
-        стало. Ревьюеры, которым ничего не досталось, показаны тоже — чтобы
-        было видно, что свободные силы остались.
-      </p>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-sm font-medium">Загрузка ревьюеров</span>
+        <Hint
+          text={
+            <>
+              Столбик на каждого ревьюера: сколько работ у него было и сколько
+              стало. Ревьюеры, которым ничего не досталось, показаны тоже —
+              чтобы было видно, что свободные силы остались.
+            </>
+          }
+        />
+      </div>
       <LoadChart
         reviewers={reviewers}
         before={result?.load_before}
@@ -980,6 +1007,13 @@ function LoadChart({
   );
 }
 
+/**
+ * Все работы задания одной таблицей: состояние, срок, балл, ревьюер.
+ *
+ * Здесь же запускается предварительная проверка и открывается её разбор.
+ * Раньше разбор жил только на экране ревьюера, и методист видел балл,
+ * но не видел, откуда он взялся: «8 из 10» без единого основания.
+ */
 function SubmissionsTable({
   subs,
   reviewers,
@@ -993,23 +1027,56 @@ function SubmissionsTable({
   toast: Toast;
   onChanged: () => void;
 }) {
+  // Какая строка раскрыта разбором. Одна за раз: разбор длинный, и две
+  // раскрытые строки подряд снова превращают таблицу в ленту текста.
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [withHistory, setWithHistory] = useState(false);
+  const real = subs.filter((s) => s.has_file !== false && !s.superseded);
+
   return (
     <Section
-      title={`Работы (${subs.length})`}
+      title={`Работы (${real.length})`}
+      hint={
+        <>
+          Все работы этого задания. Кнопка «Проверить» ставит работу в очередь
+          к модели: она читает файл и выставляет предварительные баллы по
+          критериям. Кнопка неактивна, если критерии ещё не утверждены или к
+          работе не приложен файл — причина написана в строке. «Разбор»
+          показывает, что именно нашла модель и чем подтвердила каждый балл.
+        </>
+      }
       right={
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/*
+            Два режима выгрузки. Обычный — ведомость: актуальные версии
+            реально сданных работ, по одной строке на студента. Раньше в
+            файл шло всё подряд, включая занятые места без файлов и прежние
+            версии пересданных работ: три файла превращались в пять строк,
+            после пересдачи — в шесть, и выставить по такому файлу оценки
+            было нельзя.
+          */}
+          <label className="muted flex items-center gap-1 text-xs">
+            <input
+              type="checkbox"
+              checked={withHistory}
+              onChange={(e) => setWithHistory(e.target.checked)}
+            />
+            с историей версий
+          </label>
           {(["xlsx", "csv", "json"] as const).map((fmt) => (
             <ActionButton
               key={fmt}
               doneLabel="Скачано"
               title={
-                fmt === "json"
-                  ? "Те же строки в JSON — для передачи в другую систему"
-                  : `Выгрузить итоги в ${fmt.toUpperCase()}`
+                withHistory
+                  ? "Все версии всех работ, включая заменённые"
+                  : fmt === "json"
+                    ? "Те же строки в JSON — для передачи в другую систему"
+                    : `Ведомость в ${fmt.toUpperCase()}: по строке на актуальную работу`
               }
               onAction={() =>
                 download(
-                  api.exportUrl(assignment.id, fmt),
+                  api.exportUrl(assignment.id, fmt, withHistory),
                   `review_${assignment.track}.${fmt}`,
                 ).catch((e) => {
                   toast(String(e.message ?? e), "err");
@@ -1023,109 +1090,297 @@ function SubmissionsTable({
         </div>
       }
     >
-      <p className="muted mb-2 text-xs">
-        Выгрузка заменяет ручной перенос результатов в таблицу проверки. Внешних
-        интеграций нет — контур офлайн, файл открывается той же таблицей.
-      </p>
+      {!assignment.rubric_approved && (
+        <div
+          className="mb-2 rounded p-2 text-xs"
+          style={{ background: "var(--surface-2)", color: "var(--warn)" }}
+        >
+          Критерии оценивания не утверждены — проверка не запустится ни по
+          одной работе. Утвердите их на шаге «1. Задание».
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b text-left muted" style={{ borderColor: "var(--border)" }}>
               <th className="py-1 font-normal">Студент</th>
               <th className="py-1 font-normal">Файл</th>
-              <th className="py-1 font-normal">Срок</th>
-              <th className="py-1 font-normal">Статус</th>
-              <th className="py-1 text-right font-normal">Балл</th>
-              <th className="py-1 text-right font-normal">Приоритет</th>
+              <th className="py-1 font-normal">Срок сдачи</th>
+              <th className="py-1 font-normal">Состояние</th>
+              <th className="px-3 py-1 text-right font-normal">Балл</th>
+              <th
+                className="px-3 py-1 text-right font-normal"
+                title="Порядок ручной проверки: 1 — смотреть первой"
+              >
+                Очередь
+              </th>
               <th className="py-1 font-normal">Ревьюер</th>
               <th className="py-1"></th>
             </tr>
           </thead>
           <tbody>
-            {subs.map((s) => (
-              <tr key={s.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-                <td className="py-1.5">{s.student_name}</td>
-                <td className="max-w-[220px] truncate py-1.5" title={s.file_name}>
-                  {s.file_name}
-                </td>
-                <td className="py-1.5">
-                  <Badge
-                    tone={
-                      s.deadline_state === "late_zero"
-                        ? "err"
-                        : s.deadline_state === "late_penalty"
-                          ? "warn"
-                          : "ok"
-                    }
+            {real.map((s) => (
+              <Fragment key={s.id}>
+                <tr className="border-b" style={{ borderColor: "var(--border)" }}>
+                  <td className="py-1.5">{s.student_name}</td>
+                  <td className="max-w-[220px] truncate py-1.5" title={s.file_name}>
+                    {s.file_name}
+                  </td>
+                  <td className="py-1.5">
+                    <Badge
+                      tone={
+                        s.deadline_state === "late_zero"
+                          ? "err"
+                          : s.deadline_state === "late_penalty"
+                            ? "warn"
+                            : "ok"
+                      }
+                    >
+                      {s.deadline_label}
+                    </Badge>
+                  </td>
+                  <td className="py-1.5">
+                    <StatusBadge status={s.status} />
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {s.final_score ?? s.preliminary_score ?? "—"}
+                    {s.final_score != null && (
+                      <span className="muted" title="Балл подтверждён ревьюером">
+                        {" "}
+                        ✓
+                      </span>
+                    )}
+                  </td>
+                  <td
+                    className="px-3 py-1.5 text-right tabular-nums"
+                    title="Насколько работа нуждается в ручной проверке: 0 — вероятнее всего согласиться, 1 — смотреть первой"
                   >
-                    {s.deadline_label}
-                  </Badge>
-                </td>
-                <td className="py-1.5">{s.status}</td>
-                <td className="py-1.5 text-right tabular-nums">
-                  {s.final_score ?? s.preliminary_score ?? "—"}
-                  {s.final_score != null && <span className="muted"> ✓</span>}
-                </td>
-                <td className="py-1.5 text-right tabular-nums">
-                  {s.priority_index != null ? s.priority_index.toFixed(2) : "—"}
-                </td>
-                <td className="py-1.5">
-                  <select
-                    className="input py-0.5 text-xs"
-                    value={s.reviewer_id ?? ""}
-                    onChange={(e) =>
-                      api
-                        .reassign(s.id, e.target.value)
-                        .then(() => toast("Работа перенесена", "ok"))
-                        .then(onChanged)
-                        .catch((err) => toast(String(err.message ?? err), "err"))
-                    }
-                  >
-                    <option value="">— не назначен —</option>
-                    {reviewers.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="py-1.5 text-right">
-                  <ActionButton
-                    className="text-xs"
-                    doneLabel="В очереди"
-                    // Работу без файла проверять нечем: кнопка выключена,
-                    // а причина написана в подсказке. Раньше нажатие
-                    // возвращало «Формат '' не поддерживается».
-                    disabled={!assignment.rubric_approved || s.has_file === false}
-                    title={
-                      s.has_file === false
-                        ? "Файл не приложен — проверять нечего"
-                        : !assignment.rubric_approved
-                          ? "Сначала утвердите критерии оценивания"
-                          : "Запустить предварительную проверку"
-                    }
-                    onAction={() =>
-                      api
-                        .startReview(s.id)
-                        .then(() => {
-                          toast("Работа поставлена в очередь проверки", "ok");
-                          onChanged();
-                        })
-                        .catch((e) => {
-                          toast(String(e.message ?? e), "err");
-                          throw e;
-                        })
-                    }
-                  >
-                    Проверить
-                  </ActionButton>
-                </td>
-              </tr>
+                    {s.priority_index != null ? s.priority_index.toFixed(2) : "—"}
+                  </td>
+                  <td className="py-1.5">
+                    <select
+                      className="input py-0.5 text-xs"
+                      value={s.reviewer_id ?? ""}
+                      onChange={(e) =>
+                        api
+                          .reassign(s.id, e.target.value)
+                          .then(() => toast("Работа перенесена", "ok"))
+                          .then(onChanged)
+                          .catch((err) => toast(String(err.message ?? err), "err"))
+                      }
+                    >
+                      <option value="">— не назначен —</option>
+                      {reviewers.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="whitespace-nowrap py-1.5 text-right">
+                    <div className="flex justify-end gap-1">
+                      {s.review_available && (
+                        <button
+                          className="btn text-xs"
+                          onClick={() => setOpenId(openId === s.id ? null : s.id)}
+                          title="Показать, что нашла модель: баллы по критериям, цитаты, формальные нарушения"
+                        >
+                          {openId === s.id ? "Скрыть разбор" : "Разбор"}
+                        </button>
+                      )}
+                      <ActionButton
+                        className="text-xs"
+                        doneLabel="В очереди"
+                        disabled={!assignment.rubric_approved}
+                        title={
+                          !assignment.rubric_approved
+                            ? "Сначала утвердите критерии оценивания"
+                            : s.review_available
+                              ? "Проверить заново: модель перечитает файл и пересчитает баллы"
+                              : "Запустить предварительную проверку моделью"
+                        }
+                        onAction={() =>
+                          api
+                            .startReview(s.id)
+                            .then(() => {
+                              toast(
+                                "Работа поставлена в очередь. Проверка занимает "
+                                  + "около минуты, результат придёт уведомлением.",
+                                "ok",
+                              );
+                              onChanged();
+                            })
+                            .catch((e) => {
+                              toast(String(e.message ?? e), "err");
+                              throw e;
+                            })
+                        }
+                      >
+                        {s.review_available ? "Проверить заново" : "Проверить"}
+                      </ActionButton>
+                    </div>
+                  </td>
+                </tr>
+                {openId === s.id && (
+                  <tr style={{ borderColor: "var(--border)" }}>
+                    <td colSpan={8} className="pb-3">
+                      <ReviewDigest submissionId={s.id} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/*
+        Строки без файла — нагрузка прошлого потока, занятое место в очереди
+        ревьюера. Раньше они стояли в общей таблице наравне со сдачами, и у
+        них было всё, чего у них быть не может: имя студента, «сдано в срок»,
+        приоритет 0,00 и выключенная кнопка «Проверить» без видимой причины.
+      */}
+      {subs.length > real.length && (
+        <p className="muted mt-3 text-xs">
+          Кроме них в очереди ревьюеров занято мест: {subs.length - real.length}.
+          Это работы прошлого потока без файлов — они учитываются при
+          распределении нагрузки, но проверять в них нечего.
+        </p>
+      )}
+
+      <p className="muted mt-3 text-xs">
+        Выгрузка (кнопки справа наверху) заменяет ручной перенос результатов в
+        таблицу проверки. Внешних интеграций нет — контур офлайн, файл
+        открывается той же таблицей.
+      </p>
     </Section>
+  );
+}
+
+/**
+ * Разбор проверки: за что модель поставила баллы и чем их подтвердила.
+ *
+ * Только чтение. Менять баллы вправе ревьюер, которому работа назначена, —
+ * это единственное место, где решение принимает человек, и делать вторую
+ * точку редактирования у методиста нельзя.
+ */
+function ReviewDigest({ submissionId }: { submissionId: string }) {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setData(null);
+    setError("");
+    api
+      .submission(submissionId)
+      .then(setData)
+      .catch((e) => setError(String(e.message ?? e)));
+  }, [submissionId]);
+
+  if (error) return <div style={{ color: "var(--err)" }}>{error}</div>;
+  if (!data) return <Spinner label="Загрузка разбора…" />;
+
+  const review = data.review;
+  if (!review) return <Empty>Проверка ещё не выполнялась.</Empty>;
+
+  const formal = review.formal ?? [];
+  const failed = formal.filter((f: any) => f.status === "fail");
+  // Статусов четыре, а не два: «не определено» — это не «нарушений нет».
+  // Межстрочный интервал наследуется из стилей, и когда его не видно,
+  // честный ответ — «не определено».
+  const unknown = formal.filter((f: any) => f.status === "unknown");
+  const ai = review.ai_signal ?? {};
+
+  return (
+    <div className="rounded p-3" style={{ background: "var(--surface-2)" }}>
+      <div className="mb-2 flex flex-wrap items-baseline gap-3">
+        <span className="text-sm font-semibold">
+          Предварительно {review.preliminary_score} из {review.max_score}
+        </span>
+        <span className="muted">
+          проверено за {Math.round((review.duration_ms ?? 0) / 1000)} с, модель{" "}
+          {review.model}
+        </span>
+      </div>
+
+      <table className="w-full">
+        <thead className="muted text-left">
+          <tr>
+            <th className="w-1/3 py-1 font-normal">Критерий</th>
+            <th className="py-1 text-right font-normal">Балл</th>
+            <th className="py-1 pl-3 font-normal">Обоснование и доказательства</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(review.criteria ?? []).map((c: any) => {
+            const verified = (c.evidence ?? []).filter(
+              (e: any) => e.status === "verified",
+            ).length;
+            return (
+              <tr
+                key={c.criterion_id}
+                className="border-t align-top"
+                style={{ borderColor: "var(--border)" }}
+              >
+                <td className="py-1.5 pr-2">{c.criterion_name}</td>
+                <td className="py-1.5 text-right tabular-nums">
+                  {c.score} / {c.max_score}
+                </td>
+                <td className="py-1.5 pl-3">
+                  <div>{c.verdict}</div>
+                  <div className="muted mt-0.5">
+                    {(c.evidence ?? []).length === 0
+                      ? "цитат нет"
+                      : `цитат ${(c.evidence ?? []).length}, подтверждено кодом ${verified}`}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div className="mt-3 flex flex-wrap gap-4">
+        <div>
+          <div className="muted">Формальные требования</div>
+          <div className="flex flex-wrap gap-1">
+            {failed.length === 0 && <Badge tone="ok">нарушений не найдено</Badge>}
+            {failed.map((f: any) => (
+              <Badge key={f.code} tone="err" title={f.message}>
+                {f.title}
+              </Badge>
+            ))}
+            {unknown.length > 0 && (
+              <Badge
+                tone="warn"
+                title={unknown.map((f: any) => `${f.title}: ${f.message}`).join("\n")}
+              >
+                не определено: {unknown.length}
+              </Badge>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="muted">Признаки генеративного ИИ</div>
+          <Badge tone={(ai.score ?? 0) >= 0.5 ? "warn" : "ok"}>
+            {ai.confidence ?? "—"} ({(ai.score ?? 0).toFixed(2)})
+          </Badge>
+          <div className="muted mt-0.5">на балл не влияет — только порядок проверки</div>
+        </div>
+      </div>
+
+      {review.reviewer_summary && (
+        <p className="mt-3">
+          <span className="muted">Вывод для ревьюера: </span>
+          {review.reviewer_summary}
+        </p>
+      )}
+      <p className="muted mt-2">
+        Полный разбор с цитатами по блокам документа — на вкладке ревьюера,
+        которому назначена работа. Балл становится оценкой только после его
+        подтверждения.
+      </p>
+    </div>
   );
 }
 
@@ -1137,6 +1392,15 @@ function SimilarityPanel({ assignmentId, toast }: { assignmentId: string; toast:
   return (
     <Section
       title="Схожесть работ"
+      hint={
+        <>
+          Ищет совпадающие куски текста между работами одного задания:
+          TF-IDF по символьным n-граммам плюс пересечение шинглов, без
+          моделей и без сети. Работы по одному заданию неизбежно похожи,
+          поэтому порог намеренно высокий, а вывод — повод посмотреть
+          глазами, а не обвинение.
+        </>
+      }
       defaultOpen={false}
       right={
         <button
@@ -1155,10 +1419,6 @@ function SimilarityPanel({ assignmentId, toast }: { assignmentId: string; toast:
         </button>
       }
     >
-      <p className="muted mb-2 text-xs">
-        TF-IDF по символьным n-граммам плюс пересечение шинглов. Без моделей и без сети.
-        Работы по одному заданию неизбежно похожи, поэтому порог намеренно высокий.
-      </p>
       {!data && <Empty>Нажмите «Сравнить».</Empty>}
       {data && (
         <>

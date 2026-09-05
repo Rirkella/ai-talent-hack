@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getUser, setUser, subscribe, type User } from "./api";
 import { Clock, Spinner, Toast } from "./components/ui";
 import Coordinator from "./pages/Coordinator";
-import Privacy from "./pages/Privacy";
 import Quality from "./pages/Quality";
 import Login from "./pages/Login";
 import Reviewer from "./pages/Reviewer";
@@ -43,8 +42,11 @@ export default function App() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [tick, setTick] = useState(0);
-  // Вторая вкладка внутри роли: «Приватность» — финальный кадр демонстрации.
-  const [view, setView] = useState<"main" | "privacy" | "quality">("main");
+  // Вторая вкладка внутри роли — качество работы самой системы.
+  // «Приватность» вкладкой была, но это отчёт о контуре, а не рабочий
+  // экран: ревьюеру он не нужен ни разу за проверку. Переехал к методисту
+  // в «Настройки», рядом с остальным управлением стендом.
+  const [view, setView] = useState<"main" | "quality">("main");
   const [dark, setDark] = useState<boolean>(() => {
     const saved = localStorage.getItem(THEME_KEY);
     if (saved) return saved === "dark";
@@ -179,7 +181,6 @@ export default function App() {
                 [
                   ["main", roleTitle],
                   ["quality", "Качество"],
-                  ["privacy", "Приватность"],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -231,9 +232,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1500px] p-4">
-        {view === "privacy" && user.role !== "student" ? (
-          <Privacy tick={tick} />
-        ) : view === "quality" && user.role !== "student" ? (
+        {view === "quality" && user.role !== "student" ? (
           <Quality />
         ) : (
           <>

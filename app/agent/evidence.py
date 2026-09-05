@@ -43,7 +43,21 @@ def normalize(text: str) -> str:
 
 
 def verify_evidence(ev: Evidence, doc: Document) -> Evidence:
-    """Проверяет одну цитату. Возвращает её же с заполненным статусом."""
+    """Проверяет одну цитату. Возвращает её же с заполненным статусом.
+
+    Порядок проверок:
+
+    1. дословное вхождение в названный блок — `verified`;
+    2. дословное вхождение в другой блок — `wrong_block`;
+    3. похожий текст (нечёткое сравнение) — `approximate`, кандидат на
+       ручную проверку;
+    4. ничего — `not_found`.
+
+    Разделение первых трёх случаев появилось после внешнего аудита: до него
+    `verified` ставился по нечёткому сходству, и цитата с отброшенной
+    частицей «не» или изменённым числом считалась подтверждённой. Механизм,
+    который должен ловить выдумки, сам их подтверждал.
+    """
     quote = normalize(ev.quote)
 
     if len(quote) < MIN_QUOTE_CHARS:
@@ -52,44 +66,65 @@ def verify_evidence(ev: Evidence, doc: Document) -> Evidence:
         return ev
 
     target = doc.block(ev.block)
-    if target is None:
-        ev.status = EvidenceStatus.NO_BLOCK
-    else:
-        score = _best_match(quote, normalize(target.text))
-        ev.similarity = round(score, 1)
-        if score >= SIMILARITY_THRESHOLD:
-            ev.status = EvidenceStatus.VERIFIED
-            ev.found_in_block = target.index
-            return ev
-        ev.status = EvidenceStatus.NOT_FOUND
 
-    # Цитата могла быть верной, но с ошибкой в номере блока. Это менее тяжёлый
-    # случай, чем выдумка, и ревьюеру полезно знать разницу.
-    best_block, best_score = None, 0.0
+    # ── (1) дословно в названном блоке ──────────────────────────────────
+    if target is not None and quote in normalize(target.text):
+        ev.status = EvidenceStatus.VERIFIED
+        ev.found_in_block = target.index
+        ev.similarity = 100.0
+        return ev
+
+    # ── (2) дословно, но в другом блоке ─────────────────────────────────
     for b in doc.blocks:
-        if b.index == ev.block:
+        if target is not None and b.index == target.index:
+            continue
+        if quote in normalize(b.text):
+            ev.status = EvidenceStatus.WRONG_BLOCK
+            ev.found_in_block = b.index
+            ev.similarity = 100.0
+            return ev
+
+    # ── (3) похоже, но не дословно ──────────────────────────────────────
+    best_block, best_score = None, 0.0
+    if target is not None:
+        best_block = target.index
+        best_score = _best_match(quote, normalize(target.text))
+    for b in doc.blocks:
+        if target is not None and b.index == target.index:
             continue
         score = _best_match(quote, normalize(b.text))
         if score > best_score:
             best_block, best_score = b.index, score
 
-    if best_block is not None and best_score >= SIMILARITY_THRESHOLD:
-        ev.status = EvidenceStatus.WRONG_BLOCK
+    ev.similarity = round(best_score, 1)
+    if best_score >= SIMILARITY_THRESHOLD:
+        ev.status = EvidenceStatus.APPROXIMATE
         ev.found_in_block = best_block
-        ev.similarity = round(best_score, 1)
+    elif target is None:
+        ev.status = EvidenceStatus.NO_BLOCK
     else:
-        ev.similarity = round(max(ev.similarity, best_score), 1)
+        ev.status = EvidenceStatus.NOT_FOUND
     return ev
 
 
 def _best_match(needle: str, haystack: str) -> float:
     """Схожесть цитаты с наиболее похожим фрагментом блока.
 
-    `partial_ratio` ищет лучшее вхождение подстроки, что и требуется:
-    цитата — фрагмент блока, а не весь блок целиком.
+    `partial_ratio` ищет лучшее вхождение более короткой строки в более
+    длинную. Пока цитата короче блока, это то, что нужно: цитата — фрагмент
+    блока, а не весь блок целиком.
+
+    Но `partial_ratio` симметричен по длине, и когда цитата **длиннее**
+    блока, он начинает мерить обратное — насколько блок содержится в цитате.
+    Модель, склеившая цитату из нескольких блоков, получала за это 100 %
+    рядом с пометкой «не дословно»: в карточке стояло «≈ … 100 %», то есть
+    два взаимоисключающих утверждения. Здесь это не так: если цитата длиннее
+    блока, блок её содержать не может, и сравнение идёт целиком.
     """
     if not needle or not haystack:
         return 0.0
+    if len(needle) > len(haystack):
+        return float(fuzz.ratio(needle, haystack))
     return float(fuzz.partial_ratio(needle, haystack))
 
 

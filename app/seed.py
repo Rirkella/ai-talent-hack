@@ -139,9 +139,15 @@ async def _add_second_course(session, now, *, extract: bool) -> None:  # noqa: A
             condition_sha256=file_sha256(stored_condition),
             rubric=rubric.model_dump(mode="json"),
             rubric_approved=bool(rubric.criteria),
-            due_at=now + timedelta(days=5),
-            hard_due_at=now + timedelta(days=6),
-            review_due_at=now + timedelta(days=13),
+            # Срок сдачи уже прошёл, окно досдачи ещё открыто. Так по
+            # условию и устроен процесс: «проверка начинается после
+            # дедлайна». Заодно это единственный честный способ показать
+            # штраф — поздней сдачей, а не ожиданием таймера у работы,
+            # сданной вовремя: состояние сданной работы определяется
+            # моментом сдачи и не меняется, сколько бы ни двигали срок.
+            due_at=now - timedelta(hours=18),
+            hard_due_at=now + timedelta(hours=6),
+            review_due_at=now + timedelta(days=7),
             due_soon_lead_s=3600,
         )
     )
@@ -166,7 +172,12 @@ async def _add_second_course(session, now, *, extract: bool) -> None:  # noqa: A
                 file_sha256=file_sha256(stored),
                 track=spec["track"],
                 status=SubmissionStatus.ASSIGNED,
-                submitted_at=now - timedelta(hours=30 - i * 4),
+                # Две работы сданы до срока, третья — после него: у неё
+                # видно «досдача, штраф −1» сразу после установки, без
+                # ожидания и без правки дат руками.
+                submitted_at=now - (
+                    timedelta(hours=30 - i * 4) if i < 2 else timedelta(hours=2)
+                ),
             )
         )
         added += 1
@@ -262,23 +273,37 @@ async def seed(*, reset: bool = False, extract: bool = True) -> None:
                 continue
             stored = settings.upload_dir / f"seed_{uuid.uuid4().hex[:8]}{src.suffix}"
             shutil.copy2(src, stored)
+            # Первая работа сразу назначена первому ревьюеру.
+            #
+            # Раньше все три лежали нераспределёнными, а у первого ревьюера
+            # в очереди были только строки-заглушки без файлов. Кто входил
+            # под ним — а он первый в списке учётных записей — видел очередь
+            # из трёх пустых мест и ни одной кнопки проверки: делать на этом
+            # экране было нечего. Демонстрация распределения от этого не
+            # страдает: нераспределённых работ остаётся две.
+            assigned_now = i == 0
             session.add(
                 Submission(
                     id=str(uuid.uuid4()),
                     assignment_id=ASSIGNMENT_ID,
                     student_id=student_id,
+                    reviewer_id="rev-1" if assigned_now else None,
                     file_path=str(stored),
                     file_name=filename,
                     file_sha256=file_sha256(stored),
                     track="product_fraud",
-                    status=SubmissionStatus.UPLOADED,
+                    status=(
+                        SubmissionStatus.ASSIGNED
+                        if assigned_now
+                        else SubmissionStatus.UPLOADED
+                    ),
                     # Разное время сдачи: у одной работы оно после мягкого срока,
                     # чтобы правило штрафа было видно и без ожидания таймера.
                     submitted_at=now - timedelta(hours=6 - i * 2),
                 )
             )
             added += 1
-        print(f"работ: {added}")
+        print(f"работ: {added} (одна сразу назначена первому ревьюеру)")
 
         # Предварительная загрузка ревьюера: без перекоса распределение
         # выглядело бы тривиальным, а показать надо именно выравнивание.
@@ -295,9 +320,9 @@ async def seed(*, reset: bool = False, extract: bool = True) -> None:
                 track="product_fraud", status=SubmissionStatus.ASSIGNED,
                 submitted_at=now - timedelta(days=3),
             )
-            for n in range(3)
+            for n in range(2)
         ])
-        print("текущая очередь первого ревьюера: 3 работы (перекос для демонстрации)")
+        print("очередь первого ревьюера: 1 работа + 2 занятых места (перекос)")
 
         await _add_second_course(session, now, extract=extract)
 

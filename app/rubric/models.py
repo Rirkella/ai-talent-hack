@@ -96,6 +96,35 @@ class Rubric(BaseModel):
     def criterion(self, cid: str) -> Criterion | None:
         return next((c for c in self.criteria if c.id == cid), None)
 
+    def fingerprint(self) -> str:
+        """Отпечаток критериев — по чему оценивали работу.
+
+        Считается только по тому, что влияет на балл: идентификаторы,
+        названия, максимумы, веса, требования. Утверждение, автор и время
+        в отпечаток не входят — от них оценка не зависит, а иначе он менялся
+        бы при каждом нажатии «Утвердить».
+
+        Нужен, чтобы отличить результат, посчитанный по нынешним критериям,
+        от результата по прежним. Методист правит критерии и заново
+        утверждает их, а проверенные до этого работы продолжают показывать
+        баллы, посчитанные по другой рубрике, — и по виду это не отличить.
+        """
+        import hashlib
+        import json
+
+        payload = json.dumps(
+            [
+                {
+                    "id": c.id, "name": c.name, "max_score": c.max_score,
+                    "weight": c.weight, "requirements": c.requirements,
+                    "indicators": list(c.indicators),
+                }
+                for c in self.criteria
+            ],
+            ensure_ascii=False, sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
     def approve(self, by: str) -> None:
         self.approved = True
         self.approved_by = by

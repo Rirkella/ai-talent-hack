@@ -1,6 +1,81 @@
 /** Мелкие переиспользуемые элементы интерфейса. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+/**
+ * Подсказка по значку «?»: появляется по наведению и по нажатию.
+ *
+ * Раньше пояснение к каждому блоку висело под заголовком постоянно.
+ * На экране методиста таких пояснений одновременно было до девяти, и
+ * страница читалась как сплошной текст, в котором надо искать элементы
+ * управления. Объяснение нужно один раз — тому, кто видит блок впервые.
+ *
+ * Нажатие, а не только наведение: на сенсорном экране наведения нет,
+ * и подсказка, доступная лишь мышью, там просто не существует.
+ */
+export function Hint({ text }: { text: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  // Координаты всплывашки считаются, а не задаются классом выравнивания.
+  // Прижатие к правому краю значка уводило подсказку за левый край экрана
+  // ровно так же, как левое прижатие — за правый: на узком экране 288 px
+  // шире, чем расстояние до любого края. Позиция фиксированная и
+  // ограничена окном с обеих сторон.
+  const [box, setBox] = useState<{ left: number; top: number; width: number } | null>(
+    null,
+  );
+  const anchor = useRef<HTMLSpanElement>(null);
+
+  const show = () => {
+    const a = anchor.current?.getBoundingClientRect();
+    if (a) {
+      const width = Math.min(288, window.innerWidth - 16);
+      const left = Math.max(8, Math.min(a.left, window.innerWidth - width - 8));
+      setBox({ left, top: a.bottom + 6, width });
+    }
+    setOpen(true);
+  };
+
+  return (
+    <span ref={anchor} className="relative inline-flex align-middle">
+      <button
+        type="button"
+        aria-label="Что это"
+        className="flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none"
+        style={{
+          borderColor: open ? "var(--brand)" : "var(--border)",
+          color: open ? "var(--brand)" : "var(--text-dim)",
+        }}
+        onMouseEnter={show}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={show}
+        onBlur={() => setOpen(false)}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (open) setOpen(false);
+          else show();
+        }}
+      >
+        ?
+      </button>
+      {open && box && (
+        <span
+          role="tooltip"
+          className="fixed z-30 rounded border p-2 text-xs font-normal shadow-lg"
+          style={{
+            background: "var(--surface)",
+            borderColor: "var(--border)",
+            color: "var(--text)",
+            left: box.left,
+            top: box.top,
+            width: box.width,
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
 
 /** Статус формальной проверки: четыре состояния, а не два. */
 export function StatusIcon({ status }: { status: string }) {
@@ -43,6 +118,28 @@ export function Badge({
       {children}
     </span>
   );
+}
+
+/**
+ * Состояние работы по-русски.
+ *
+ * Внутренние значения (`assigned`, `ai_reviewed`) в таблице методиста
+ * показывались как есть: колонка «Статус» отвечала на английском словами
+ * из базы данных. Перевод один на всё приложение, чтобы очередь ревьюера
+ * и таблица методиста называли одно состояние одинаково.
+ */
+export function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, [string, "default" | "ok" | "warn" | "err" | "info"]> = {
+    uploaded: ["загружена", "default"],
+    assigned: ["ждёт проверки", "info"],
+    in_review: ["идёт проверка", "info"],
+    ai_reviewed: ["проверено автоматикой", "ok"],
+    confirmed: ["оценка выставлена", "ok"],
+    failed: ["проверить не удалось", "err"],
+    returned: ["на доработке", "warn"],
+  };
+  const [text, tone] = map[status] ?? [status, "default"];
+  return <Badge tone={tone}>{text}</Badge>;
 }
 
 /** Полоса заполнения — для баллов и индексов. */
@@ -236,21 +333,24 @@ export function Section({
   return (
     <div className="card">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <button
-          className="flex items-center gap-2 text-left font-semibold"
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span className="muted text-xs">{open ? "▾" : "▸"}</span>
-          {title}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="flex items-center gap-2 text-left font-semibold"
+            onClick={() => setOpen((v) => !v)}
+          >
+            <span className="muted text-xs">{open ? "▾" : "▸"}</span>
+            {title}
+          </button>
+          {/*
+            Пояснение живёт в значке «?» рядом с заголовком, а не строкой
+            под ним. Постоянный текст под каждым из девяти блоков превращал
+            рабочий экран в инструкцию: элементы управления приходилось
+            выискивать между абзацами.
+          */}
+          {hint && <Hint text={hint} />}
+        </div>
         {right}
       </div>
-      {/*
-        Подпись видна и у свёрнутого блока. Свёрнутый раздел с названием
-        вроде «Схожесть работ» ничего не сообщает о том, что внутри, и
-        открывать его наугад приходится по очереди.
-      */}
-      {hint && <div className="muted mt-1 text-xs">{hint}</div>}
       {/*
         Горизонтальный скролл живёт внутри секции, а не на странице.
         Без этого широкие таблицы (рубрика, очередь, разбор по прогонам)

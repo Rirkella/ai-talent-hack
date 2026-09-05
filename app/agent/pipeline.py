@@ -434,6 +434,7 @@ def run_review(
     )
     ctx.result.submission_id = submission_id
     ctx.result.source_name = work.source_name
+    ctx.result.rubric_fingerprint = rubric.fingerprint()
     ctx.result.warnings = list(work.warnings)
     ctx.result.model = get_client(fast=fast).model
 

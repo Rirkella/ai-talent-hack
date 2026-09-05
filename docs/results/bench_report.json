@@ -1,165 +1,222 @@
 {
   "model": "avito-reviewer",
-  "started_at": "2026-09-04 07:33:41",
+  "started_at": "2026-09-05 19:42:55",
+  "provenance": {
+    "condition": {
+      "name": "Product_Fraud_ДЗ2_условия.pdf",
+      "sha256": "11a88282b2c28a0af0069d57fd2b64bb70366cb747134febbfbdeab1abcc8316"
+    },
+    "works": [
+      {
+        "label": "слабое",
+        "name": "Product_Fraud_ДЗ2_Решение слабое.docx",
+        "sha256": "ba607a04b647e78991f71ec7a34175fcbd8ffd823b6b3b4f40d6d1ec85a7ba68"
+      },
+      {
+        "label": "среднее",
+        "name": "Product_Fraud_ДЗ2_Решение среднее.docx",
+        "sha256": "d2b1974978664ae7ff14c2de44111f5a1a1fa4f0827999953236800356749793"
+      },
+      {
+        "label": "хорошее",
+        "name": "Product_Fraud_ДЗ2_Решение хорошее.docx",
+        "sha256": "46d5ed69ab5e87ea03f99a0832ed3653f56f1a8416b849532f0d6abe1178ab07"
+      }
+    ],
+    "rubric_fingerprint": "3303eea903c5df4f",
+    "rubric_criteria": 5,
+    "rubric_total_max": 10.0,
+    "extract_prompts_sha256": "918ce6c69136e3c5",
+    "model": "avito-reviewer",
+    "temperature": 0.0,
+    "seed": 42,
+    "num_ctx": 32768,
+    "reasoning_effort": "none",
+    "evidence_rule": "verified — дословное вхождение цитаты в указанный блок после нормализации регистра, пробелов, «ё» и кавычек; approximate — нечёткое совпадение от 82 %, подтверждением не считается"
+  },
   "runs": [
     {
       "label": "слабое",
       "run_index": 0,
-      "score": 6.5,
-      "max_score": 10.0,
-      "duration_s": 40.5,
-      "evidence_total": 15,
-      "evidence_verified": 13,
-      "failed_steps": [],
-      "failed_criteria": 0,
-      "ai_score": 0.394,
-      "ai_confidence": "средняя",
-      "formal_violations": 1,
-      "per_criterion": {
-        "korrektnost_opisania_produkta_i": 0.5,
-        "glubina_i_sistemnost_analiza": 3.5,
-        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
-        "realisticnyj_rascet_roi_mitigacii": 0.5,
-        "kacestvo_oformlenia": 0.5
-      }
-    },
-    {
-      "label": "среднее",
-      "run_index": 0,
-      "score": 8.3,
-      "max_score": 10.0,
-      "duration_s": 48.3,
-      "evidence_total": 20,
-      "evidence_verified": 16,
-      "failed_steps": [],
-      "failed_criteria": 0,
-      "ai_score": 0.093,
-      "ai_confidence": "высокая",
-      "formal_violations": 1,
-      "per_criterion": {
-        "korrektnost_opisania_produkta_i": 1.0,
-        "glubina_i_sistemnost_analiza": 3.5,
-        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
-        "realisticnyj_rascet_roi_mitigacii": 1.5,
-        "kacestvo_oformlenia": 0.8
-      }
-    },
-    {
-      "label": "хорошее",
-      "run_index": 0,
-      "score": 8.0,
-      "max_score": 10.0,
-      "duration_s": 47.5,
-      "evidence_total": 22,
-      "evidence_verified": 21,
-      "failed_steps": [],
-      "failed_criteria": 0,
-      "ai_score": 0.309,
-      "ai_confidence": "средняя",
-      "formal_violations": 0,
-      "per_criterion": {
-        "korrektnost_opisania_produkta_i": 1.0,
-        "glubina_i_sistemnost_analiza": 3.5,
-        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
-        "realisticnyj_rascet_roi_mitigacii": 1.5,
-        "kacestvo_oformlenia": 0.5
-      }
-    },
-    {
-      "label": "слабое",
-      "run_index": 1,
-      "score": 6.5,
-      "max_score": 10.0,
-      "duration_s": 39.7,
-      "evidence_total": 15,
-      "evidence_verified": 13,
-      "failed_steps": [],
-      "failed_criteria": 0,
-      "ai_score": 0.394,
-      "ai_confidence": "средняя",
-      "formal_violations": 1,
-      "per_criterion": {
-        "korrektnost_opisania_produkta_i": 0.5,
-        "glubina_i_sistemnost_analiza": 3.5,
-        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
-        "realisticnyj_rascet_roi_mitigacii": 0.5,
-        "kacestvo_oformlenia": 0.5
-      }
-    },
-    {
-      "label": "среднее",
-      "run_index": 1,
-      "score": 8.3,
-      "max_score": 10.0,
-      "duration_s": 49.2,
-      "evidence_total": 22,
-      "evidence_verified": 18,
-      "failed_steps": [],
-      "failed_criteria": 0,
-      "ai_score": 0.093,
-      "ai_confidence": "высокая",
-      "formal_violations": 1,
-      "per_criterion": {
-        "korrektnost_opisania_produkta_i": 1.0,
-        "glubina_i_sistemnost_analiza": 3.5,
-        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
-        "realisticnyj_rascet_roi_mitigacii": 1.5,
-        "kacestvo_oformlenia": 0.8
-      }
-    },
-    {
-      "label": "хорошее",
-      "run_index": 1,
-      "score": 8.0,
-      "max_score": 10.0,
-      "duration_s": 47.0,
-      "evidence_total": 22,
-      "evidence_verified": 21,
-      "failed_steps": [],
-      "failed_criteria": 0,
-      "ai_score": 0.309,
-      "ai_confidence": "средняя",
-      "formal_violations": 0,
-      "per_criterion": {
-        "korrektnost_opisania_produkta_i": 1.0,
-        "glubina_i_sistemnost_analiza": 3.5,
-        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
-        "realisticnyj_rascet_roi_mitigacii": 1.5,
-        "kacestvo_oformlenia": 0.5
-      }
-    },
-    {
-      "label": "слабое",
-      "run_index": 2,
-      "score": 6.5,
-      "max_score": 10.0,
-      "duration_s": 40.6,
-      "evidence_total": 16,
-      "evidence_verified": 14,
-      "failed_steps": [],
-      "failed_criteria": 0,
-      "ai_score": 0.394,
-      "ai_confidence": "средняя",
-      "formal_violations": 1,
-      "per_criterion": {
-        "korrektnost_opisania_produkta_i": 0.5,
-        "glubina_i_sistemnost_analiza": 3.5,
-        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
-        "realisticnyj_rascet_roi_mitigacii": 0.5,
-        "kacestvo_oformlenia": 0.5
-      }
-    },
-    {
-      "label": "среднее",
-      "run_index": 2,
-      "score": 8.3,
+      "score": 5.5,
       "max_score": 10.0,
       "duration_s": 49.6,
-      "evidence_total": 22,
-      "evidence_verified": 18,
+      "evidence_total": 17,
+      "evidence_verified": 15,
+      "evidence_wrong_block": 0,
+      "evidence_approximate": 1,
+      "evidence_not_found": 1,
       "failed_steps": [],
       "failed_criteria": 0,
-      "ai_score": 0.093,
+      "ai_score": 0.394,
+      "ai_confidence": "средняя",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 0.5,
+        "glubina_i_sistemnost_analiza": 2.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 0.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "среднее",
+      "run_index": 0,
+      "score": 8.3,
+      "max_score": 10.0,
+      "duration_s": 51.7,
+      "evidence_total": 22,
+      "evidence_verified": 8,
+      "evidence_wrong_block": 9,
+      "evidence_approximate": 4,
+      "evidence_not_found": 1,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.163,
+      "ai_confidence": "высокая",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.8
+      }
+    },
+    {
+      "label": "хорошее",
+      "run_index": 0,
+      "score": 8.0,
+      "max_score": 10.0,
+      "duration_s": 49.5,
+      "evidence_total": 22,
+      "evidence_verified": 12,
+      "evidence_wrong_block": 0,
+      "evidence_approximate": 4,
+      "evidence_not_found": 6,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.309,
+      "ai_confidence": "средняя",
+      "formal_violations": 0,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "слабое",
+      "run_index": 1,
+      "score": 5.5,
+      "max_score": 10.0,
+      "duration_s": 46.5,
+      "evidence_total": 17,
+      "evidence_verified": 15,
+      "evidence_wrong_block": 0,
+      "evidence_approximate": 1,
+      "evidence_not_found": 1,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.394,
+      "ai_confidence": "средняя",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 0.5,
+        "glubina_i_sistemnost_analiza": 2.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 0.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "среднее",
+      "run_index": 1,
+      "score": 8.3,
+      "max_score": 10.0,
+      "duration_s": 52.1,
+      "evidence_total": 22,
+      "evidence_verified": 8,
+      "evidence_wrong_block": 9,
+      "evidence_approximate": 4,
+      "evidence_not_found": 1,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.163,
+      "ai_confidence": "высокая",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.8
+      }
+    },
+    {
+      "label": "хорошее",
+      "run_index": 1,
+      "score": 8.0,
+      "max_score": 10.0,
+      "duration_s": 48.7,
+      "evidence_total": 22,
+      "evidence_verified": 12,
+      "evidence_wrong_block": 0,
+      "evidence_approximate": 4,
+      "evidence_not_found": 6,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.309,
+      "ai_confidence": "средняя",
+      "formal_violations": 0,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 1.0,
+        "glubina_i_sistemnost_analiza": 3.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 1.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "слабое",
+      "run_index": 2,
+      "score": 5.5,
+      "max_score": 10.0,
+      "duration_s": 47.1,
+      "evidence_total": 17,
+      "evidence_verified": 15,
+      "evidence_wrong_block": 0,
+      "evidence_approximate": 1,
+      "evidence_not_found": 1,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.394,
+      "ai_confidence": "средняя",
+      "formal_violations": 1,
+      "per_criterion": {
+        "korrektnost_opisania_produkta_i": 0.5,
+        "glubina_i_sistemnost_analiza": 2.5,
+        "obosnovannaa_prioritizacia_treh_kriticnyh": 1.5,
+        "realisticnyj_rascet_roi_mitigacii": 0.5,
+        "kacestvo_oformlenia": 0.5
+      }
+    },
+    {
+      "label": "среднее",
+      "run_index": 2,
+      "score": 8.3,
+      "max_score": 10.0,
+      "duration_s": 51.9,
+      "evidence_total": 22,
+      "evidence_verified": 8,
+      "evidence_wrong_block": 9,
+      "evidence_approximate": 4,
+      "evidence_not_found": 1,
+      "failed_steps": [],
+      "failed_criteria": 0,
+      "ai_score": 0.163,
       "ai_confidence": "высокая",
       "formal_violations": 1,
       "per_criterion": {
@@ -175,9 +232,12 @@
       "run_index": 2,
       "score": 8.0,
       "max_score": 10.0,
-      "duration_s": 46.7,
+      "duration_s": 48.5,
       "evidence_total": 22,
-      "evidence_verified": 21,
+      "evidence_verified": 12,
+      "evidence_wrong_block": 0,
+      "evidence_approximate": 4,
+      "evidence_not_found": 6,
       "failed_steps": [],
       "failed_criteria": 0,
       "ai_score": 0.309,
@@ -194,7 +254,7 @@
   ],
   "summary": {
     "mean_scores": {
-      "слабое": 6.5,
+      "слабое": 5.5,
       "среднее": 8.3,
       "хорошее": 8.0
     },
@@ -204,22 +264,29 @@
       "среднее": 0.0,
       "хорошее": 0.0
     },
-    "evidence_verified_rate": 0.8806818181818182,
-    "mean_duration_s": 45.455555555555556,
+    "evidence_verified_rate": 0.5737704918032787,
+    "evidence_breakdown": {
+      "total": 183,
+      "verified": 105,
+      "wrong_block": 27,
+      "approximate": 27,
+      "not_found": 24
+    },
+    "mean_duration_s": 49.51111111111111,
     "runs_per_case": 3,
     "pairs": [
       {
         "pair": "слабое < среднее",
         "correct_runs": 3,
         "runs": 3,
-        "mean_gap": 1.8,
+        "mean_gap": 2.8,
         "separated": true
       },
       {
         "pair": "слабое < хорошее",
         "correct_runs": 3,
         "runs": 3,
-        "mean_gap": 1.5,
+        "mean_gap": 2.5,
         "separated": true
       },
       {

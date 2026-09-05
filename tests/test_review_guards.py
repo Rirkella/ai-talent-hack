@@ -38,19 +38,19 @@ RUBRIC = {
 
 
 @pytest.fixture
-def client(tmp_path):
-    from app.db import get_session
-    from app.main import app
+def client(tmp_path, isolated_client):
+    """Готовое состояние поверх изолированной базы.
 
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'g.db'}")
-    maker = async_sessionmaker(engine, expire_on_commit=False)
+    База, каталог загрузок и очередь берутся из `isolated_client`: очередь
+    ревью и планировщик ходят мимо подменённой зависимости, прямо в
+    `session_scope`, и без общей подмены писали бы в рабочую базу.
+    """
+    maker = isolated_client.maker
 
     work = tmp_path / "работа.md"
     work.write_text("# Решение\n\nТекст работы.\n", encoding="utf-8")
 
     async def prepare():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
         async with maker() as s:
             s.add(User(id="coord-1", name="Методист", role=Role.COORDINATOR))
             s.add(User(id="stu-1", name="Студент", role=Role.STUDENT))
@@ -68,17 +68,7 @@ def client(tmp_path):
             await s.commit()
 
     asyncio.run(prepare())
-
-    async def override():
-        async with maker() as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override
-    test_client = TestClient(app)
-    # Фабрика сессий нужна тестам, которые готовят состояние прямо в базе.
-    test_client.maker = maker  # type: ignore[attr-defined]
-    yield test_client
-    app.dependency_overrides.clear()
+    yield isolated_client
 
 
 COORD = {"X-User-Id": "coord-1"}
@@ -237,8 +227,10 @@ REVIEWED = {
     "preliminary_score": 7.0,
     "max_score": 10.0,
     "criteria": [
-        {"criterion_id": "c1", "criterion_name": "Первый", "score": 4.0, "max_score": 5.0},
-        {"criterion_id": "c2", "criterion_name": "Второй", "score": 3.0, "max_score": 5.0},
+        {"criterion_id": "c1", "criterion_name": "Первый", "score": 4.0,
+         "max_score": 5.0, "weight": 1.0, "ai_score": 4.0, "verdict": "разбор"},
+        {"criterion_id": "c2", "criterion_name": "Второй", "score": 3.0,
+         "max_score": 5.0, "weight": 1.0, "ai_score": 3.0, "verdict": "разбор"},
     ],
     "penalties": [
         {"code": "deadline", "title": "Нарушение срока сдачи", "amount": 1.0,
@@ -250,8 +242,16 @@ REVIEWED = {
 
 @pytest.fixture
 def confirmable(client):
-    """Работа с готовой проверкой, назначенная конкретному ревьюеру."""
+    """Работа с готовой проверкой, назначенная конкретному ревьюеру.
+
+    Сроки заданы настоящие: сдача на час позже мягкого дедлайна и за 23
+    часа до жёсткого — то самое состояние «досдача со штрафом −1», которое
+    описывает условие задания. Раньше сроков у задания не было вовсе, а
+    штраф лежал в сохранённом результате «просто так»; подтверждение
+    доверяло этой записи, вместо того чтобы вывести штраф из дат.
+    """
     import asyncio as aio
+    from datetime import timedelta
 
     async def prepare():
         async with client.maker() as s:
@@ -260,6 +260,9 @@ def confirmable(client):
             work = await s.get(Submission, "ok")
             work.reviewer_id = "rev-1"
             work.review = REVIEWED
+            assignment = await s.get(Assignment, "asg")
+            assignment.due_at = work.submitted_at - timedelta(hours=1)
+            assignment.hard_due_at = work.submitted_at + timedelta(hours=23)
             await s.commit()
 
     aio.run(prepare())
@@ -340,13 +343,18 @@ def test_work_past_the_hard_deadline_is_confirmed_with_zero(confirmable) -> None
     ноль, уходила студенту с полным баллом.
     """
     import asyncio as aio
-
-    from app.models import DeadlineState
+    from datetime import timedelta
 
     async def overdue():
         async with confirmable.maker() as s:
+            # Двигается сам срок, а не флаг состояния: подтверждение
+            # выводит правило из дат задания и времени сдачи, а не верит
+            # сохранённому полю. Проставленный руками флаг проверял бы,
+            # что сервер доверяет флагу, — то есть ровно то, чего делать
+            # нельзя.
             work = await s.get(Submission, "ok")
-            work.deadline_state = DeadlineState.LATE_ZERO
+            assignment = await s.get(Assignment, "asg")
+            assignment.hard_due_at = work.submitted_at - timedelta(hours=1)
             await s.commit()
 
     aio.run(overdue())
@@ -427,6 +435,7 @@ def test_manual_score_for_a_failed_criterion_counts(confirmable) -> None:
     выбрасывался из итога.
     """
     import asyncio as aio
+    from datetime import timedelta
 
     async def break_one():
         async with confirmable.maker() as s:
@@ -440,6 +449,11 @@ def test_manual_score_for_a_failed_criterion_counts(confirmable) -> None:
             review["penalties"] = []
             work.review = review
             work.reviewer_id = "rev-1"
+            # Сдача в срок: проверяется только арифметика по критериям,
+            # штраф за просрочку здесь ни при чём.
+            assignment = await s.get(Assignment, "asg")
+            assignment.due_at = work.submitted_at + timedelta(hours=1)
+            assignment.hard_due_at = work.submitted_at + timedelta(hours=25)
             await s.commit()
 
     aio.run(break_one())
@@ -521,3 +535,32 @@ def test_absurdly_long_file_name_is_trimmed(client) -> None:
     assert r.status_code == 200, r.text
     rows = {s["id"]: s for s in client.get("/api/submissions", headers=COORD).json()}
     assert len(rows[r.json()["submission_id"]]["file_name"]) <= 200
+
+
+def test_fileless_rows_sink_to_the_bottom_of_the_queue(client) -> None:
+    """Занятое место не должно открываться первым.
+
+    Очередь сортировалась по индексу приоритета и времени сдачи. У строк
+    без файла приоритет нулевой, но сдача у них старая, и они всплывали
+    наверх: ревьюер открывал экран, упирался в «проверять нечего» и делал
+    вывод, что кнопки проверки в продукте нет вообще.
+    """
+    rows = client.get("/api/submissions", headers=COORD).json()
+    with_file = [i for i, r in enumerate(rows) if r["has_file"]]
+    without = [i for i, r in enumerate(rows) if not r["has_file"]]
+    assert with_file and without, "в наборе должны быть строки обоих видов"
+    assert max(with_file) < min(without), (
+        "строка без файла оказалась выше работы с файлом: "
+        + ", ".join(f"{r['file_name']}={r['has_file']}" for r in rows)
+    )
+
+
+def test_review_availability_is_reported_separately_from_the_score(client) -> None:
+    """Разбор показывается по наличию критериев, а не по наличию балла.
+
+    Балл может быть выставлен вручную по работе, которую модель не
+    проверяла, — тогда показывать нечего, и кнопка «Разбор» появиться
+    не должна.
+    """
+    rows = {s["id"]: s for s in client.get("/api/submissions", headers=COORD).json()}
+    assert rows["ok"]["review_available"] is False

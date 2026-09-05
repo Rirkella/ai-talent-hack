@@ -128,7 +128,21 @@ if WEB_DIR.exists():
 
     @app.get("/")
     async def index() -> FileResponse:
-        return FileResponse(WEB_DIR / "index.html")
+        """Страница приложения.
+
+        `Cache-Control: no-store` обязателен. `FileResponse` ставит только
+        `ETag` и `Last-Modified`, а без `Cache-Control` браузеру разрешено
+        эвристическое кэширование: он вправе отдать `index.html` из кэша
+        вообще без обращения к серверу. Имена файлов сборки содержат хеш,
+        поэтому старый `index.html` намертво прибивает старый интерфейс —
+        пересобранный фронт до пользователя не доезжает, и обновление
+        страницы ничего не меняет. Сами файлы сборки кэшировать можно и
+        нужно: их имя меняется при каждой сборке.
+        """
+        return FileResponse(
+            WEB_DIR / "index.html",
+            headers={"Cache-Control": "no-store, must-revalidate"},
+        )
 else:  # pragma: no cover — только при повреждённой выгрузке
 
     @app.get("/")

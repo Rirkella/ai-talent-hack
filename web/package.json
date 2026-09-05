@@ -6,11 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "shots": "node scripts/screenshots.mjs",
-    "story-shots": "node scripts/story_shots.mjs",
-    "pdf": "node scripts/make_pdf.mjs",
-    "guide-shots": "node scripts/guide_shots.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "react": "^18.3.1",

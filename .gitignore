@@ -3,8 +3,7 @@
 # Примеры восстанавливаются scripts/fetch_examples.ps1.
 data/
 
-# Исключение: отчёт бенчмарка — результат для защиты, копия лежит
-# в docs/results/ и коммитится.
+# Отчёт docs/results/bench_report.json нужен странице «Качество».
 
 # секреты
 .env
@@ -31,5 +30,15 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Промежуточный HTML сборки PDF — сами PDF в репозитории нужны, разметка нет.
-docs/pdf/*.html
+# Материалы защиты и инструкции остаются только локально.
+/CLAUDE.md
+/PROJECT.md
+/docs/*
+!/docs/results/
+/docs/results/*
+!/docs/results/bench_report.json
+
+# Локальные инструменты подготовки PDF и скриншотов.
+/scripts/build_docs_pdf.py
+/scripts/build_story_pdf.py
+/web/scripts/

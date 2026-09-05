@@ -18,21 +18,12 @@ import { Badge, Empty, Section, Spinner } from "../components/ui";
 export default function Quality() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [effect, setEffect] = useState<any>(null);
 
   useEffect(() => {
     api
       .quality()
       .then(setData)
       .catch((e) => setError(String(e.message ?? e)));
-    // Показатели эффекта переехали сюда из аналитики потока: там они
-    // мешали смотреть на сам поток, а кейс требует измеримых показателей
-    // — сокращения ручных действий, времени обработки и просроченных
-    // проверок. Место для них — страница про качество работы системы.
-    api
-      .analytics()
-      .then((a) => setEffect(a.effect))
-      .catch(() => setEffect(null));
   }, []);
 
   if (error) return <Section title="Качество ревью"><Empty>{error}</Empty></Section>;
@@ -52,8 +43,6 @@ export default function Quality() {
 
   return (
     <div className="flex flex-col gap-4">
-      {effect && <EffectSection effect={effect} />}
-
       <Section
         title="Насколько точно система оценивает работы"
         right={<Badge>модель: {data.model}</Badge>}
@@ -64,6 +53,40 @@ export default function Quality() {
           а не статистика: выборка мала, и выводы за её пределы не переносятся.
           Прогон от {String(data.started_at ?? "—")}.
         </p>
+
+        {/*
+          Происхождение чисел. Без него отчёт нельзя ни повторить, ни
+          сопоставить с тем, что показывает приложение: два прогона на
+          разных рубриках выглядят одинаково, а расходятся на балл.
+        */}
+        {data.provenance && (
+          <details className="mb-3">
+            <summary className="muted cursor-pointer text-xs">
+              На чём считалось: рубрика, файлы, настройки модели
+            </summary>
+            <div className="muted mt-2 grid gap-1 text-[11px] sm:grid-cols-2">
+              <div>
+                критериев {data.provenance.rubric_criteria}, максимум{" "}
+                {data.provenance.rubric_total_max}, отпечаток рубрики{" "}
+                <code>{data.provenance.rubric_fingerprint}</code>
+              </div>
+              <div>
+                модель <code>{data.provenance.model}</code>, temperature{" "}
+                {data.provenance.temperature}, seed {data.provenance.seed},
+                контекст {data.provenance.num_ctx}
+              </div>
+              <div>
+                условие <code>{data.provenance.condition?.name}</code> (
+                {String(data.provenance.condition?.sha256).slice(0, 12)}…)
+              </div>
+              <div>
+                отпечаток промптов извлечения{" "}
+                <code>{data.provenance.extract_prompts_sha256}</code>
+              </div>
+              <div className="sm:col-span-2">{data.provenance.evidence_rule}</div>
+            </div>
+          </details>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Kpi
@@ -81,9 +104,9 @@ export default function Quality() {
             tone="ok"
           />
           <Kpi
-            title="Цитаты подтверждены"
+            title="Цитаты дословны"
             value={`${Math.round((s.evidence_verified_rate ?? 0) * 100)}%`}
-            hint="найдены кодом в указанном блоке"
+            hint="найдены кодом дословно в указанном блоке"
             tone={(s.evidence_verified_rate ?? 0) >= 0.85 ? "ok" : "warn"}
           />
           <Kpi
@@ -94,6 +117,56 @@ export default function Quality() {
           />
         </div>
       </Section>
+
+      {/*
+        Что стало с каждой цитатой. Одной доли «подтверждено» мало:
+        «не найдено в работе» и «найдено, но в другом блоке» — разные по
+        тяжести случаи, а «похоже, но не дословно» вообще не подтверждение.
+      */}
+      {s.evidence_breakdown && (
+        <Section
+          title="Что стало с цитатами модели"
+          hint="Каждый балл модель обязана подкрепить цитатой с номером блока. Код ищет эту цитату в работе. Зелёным считается только дословное вхождение: цитата с отброшенной частицей «не» набирает 94 % сходства и смысл при этом переворачивает."
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {(
+              [
+                ["verified", "Дословно в своём блоке", "подтверждение", "ok"],
+                ["wrong_block", "Дословно, но в другом блоке", "ошибка в номере", "warn"],
+                ["approximate", "Похоже, но не дословно", "нужен взгляд человека", "warn"],
+                ["not_found", "В работе не найдено", "выдумка или склейка из разных мест", "err"],
+              ] as const
+            ).map(([key, title, note, tone]) => {
+              const n = s.evidence_breakdown[key] ?? 0;
+              const total = s.evidence_breakdown.total || 1;
+              return (
+                <div key={key} className="rounded p-3" style={{ background: "var(--surface-2)" }}>
+                  <div className="muted text-xs">{title}</div>
+                  <div
+                    className="text-2xl font-semibold tabular-nums"
+                    style={{
+                      color:
+                        tone === "ok"
+                          ? "var(--ok)"
+                          : tone === "warn"
+                            ? "var(--warn)"
+                            : "var(--err)",
+                    }}
+                  >
+                    {n}
+                    <span className="muted text-sm"> · {Math.round((n / total) * 100)}%</span>
+                  </div>
+                  <div className="muted text-[11px]">{note}</div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="muted mt-2 text-xs">
+            Всего цитат: {s.evidence_breakdown.total}. Неподтверждённая цитата
+            балл не снижает — она поднимает работу в очереди ручной проверки.
+          </p>
+        </Section>
+      )}
 
       <Section title="Средний балл по уровням работ">
         <table className="w-full text-sm">
@@ -217,59 +290,5 @@ function Kpi({
       </div>
       <div className="muted text-[11px]">{hint}</div>
     </div>
-  );
-}
-
-/**
- * Измеримые показатели эффекта — прямой ответ на критерий успеха кейса.
- *
- * Базовая линия ручных действий выведена из семи шагов процесса AS-IS и
- * зафиксирована в `docs/as-is-to-be.md`; фактические действия считаются по
- * журналу. Числитель и знаменатель обязаны считать одни и те же работы —
- * когда-то они считали разные, и метрика показывала «сокращение −36 %»,
- * то есть заявляла, что система увеличила ручную работу.
- */
-function EffectSection({ effect }: { effect: any }) {
-  const pct = (v: number | null | undefined) =>
-    v != null ? `${Math.round(v * 100)}%` : "—";
-
-  const cells: [string, string, string][] = [
-    ["Ручных действий было", String(effect.manual_actions_baseline ?? "—"),
-     "базовая линия процесса без системы"],
-    ["Ручных действий стало", String(effect.manual_actions_actual ?? "—"),
-     "фактические действия пользователей из журнала"],
-    ["Сокращение", pct(effect.reduction_rate),
-     "на столько меньше ручных операций"],
-    ["Время проверки работы",
-     effect.mean_processing_seconds != null
-       ? `${Math.round(effect.mean_processing_seconds)} с`
-       : "—",
-     "среднее время предварительной проверки"],
-    ["Просроченных проверок", String(effect.overdue_reviews ?? "—"),
-     "работ, не закрытых в срок проверки"],
-    ["Работ обработано", String(effect.submissions_processed ?? "—"),
-     "по ним и считаются числа выше"],
-  ];
-
-  return (
-    <Section
-      title="Эффект: измеримые показатели"
-      hint="Три показателя из критериев успеха кейса: ручные действия, время обработки, просроченные проверки."
-    >
-      <div className="grid gap-3 sm:grid-cols-3">
-        {cells.map(([label, value, hint]) => (
-          <div key={label} className="rounded p-2" style={{ background: "var(--surface-2)" }}>
-            <div className="muted text-xs">{label}</div>
-            <div className="text-xl font-semibold tabular-nums">{value}</div>
-            <div className="muted text-[11px]">{hint}</div>
-          </div>
-        ))}
-      </div>
-      <p className="muted mt-2 text-xs">
-        Базовая линия выведена из семи шагов текущего процесса и зафиксирована
-        в <code>docs/as-is-to-be.md</code>. Фактические действия берутся из
-        журнала действий пользователей, а не оцениваются.
-      </p>
-    </Section>
   );
 }

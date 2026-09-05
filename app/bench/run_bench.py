@@ -35,6 +35,10 @@ from app.rubric.extract import extract_rubric
 from app.rubric.models import Rubric
 
 EXAMPLES = PROJECT_ROOT / "data" / "examples" / "product_fraud"
+# Один и тот же файл для бенчмарка и для вкладки «Качество». Бенчмарк писал
+# в `data/`, а приложение читает `docs/results/`: свежий прогон никуда не
+# доезжал, и на экране оставались числа прошлого замера.
+REPORT_PATH = PROJECT_ROOT / "docs" / "results" / "bench_report.json"
 CONDITION = EXAMPLES / "Product_Fraud_ДЗ2_условия.pdf"
 
 # Порядок важен: индекс = ожидаемый уровень качества по возрастанию.
@@ -54,6 +58,12 @@ class CaseRun:
     duration_s: float
     evidence_total: int
     evidence_verified: int
+    # Судьба неподтверждённых цитат по статусам. Раньше всё, что не
+    # `verified`, попадало в один остаток, и «не найдено» не отличалось от
+    # «найдено, но в другом блоке» — это разные по тяжести случаи.
+    evidence_wrong_block: int = 0
+    evidence_approximate: int = 0
+    evidence_not_found: int = 0
     failed_steps: list[str] = field(default_factory=list)
     failed_criteria: int = 0
     ai_score: float = 0.0
@@ -67,6 +77,10 @@ class BenchReport:
     runs: list[CaseRun] = field(default_factory=list)
     model: str = ""
     started_at: str = ""
+    # Чем именно получен результат: хеши входных файлов, отпечаток рубрики
+    # и промптов, настройки модели. Отчёт без этого невозможно ни повторить,
+    # ни сравнить с тем, что показывает приложение.
+    provenance: dict = field(default_factory=dict)
 
     # ── агрегаты ──────────────────────────────────────────────────────────
 
@@ -165,21 +179,49 @@ class BenchReport:
     def mean_duration(self) -> float:
         return statistics.mean([r.duration_s for r in self.runs]) if self.runs else 0.0
 
+    def evidence_breakdown(self) -> dict[str, int]:
+        """Судьба всех цитат прогонa по статусам проверки."""
+        return {
+            "total": sum(r.evidence_total for r in self.runs),
+            "verified": sum(r.evidence_verified for r in self.runs),
+            "wrong_block": sum(r.evidence_wrong_block for r in self.runs),
+            "approximate": sum(r.evidence_approximate for r in self.runs),
+            "not_found": sum(r.evidence_not_found for r in self.runs),
+        }
+
     def to_dict(self) -> dict[str, object]:
         return {
             "model": self.model,
             "started_at": self.started_at,
+            # Происхождение результата. Без него отчёт нельзя ни повторить,
+            # ни сопоставить с тем, что показывает приложение: два прогона
+            # на разных рубриках выглядят одинаково.
+            "provenance": self.provenance,
             "runs": [r.__dict__ for r in self.runs],
             "summary": {
                 "mean_scores": self.mean_scores(),
                 "ranking_accuracy": self.ranking_accuracy(),
                 "stability_spread": self.stability(),
                 "evidence_verified_rate": self.evidence_rate(),
+                # «Подтверждено» теперь означает дословное вхождение.
+                # Разбор по статусам обязателен рядом с этой долей: без него
+                # непонятно, промах это модели или ошибка в номере блока.
+                "evidence_breakdown": self.evidence_breakdown(),
                 "mean_duration_s": self.mean_duration(),
                 "runs_per_case": self.runs_count,
                 "pairs": self.pair_details(),
             },
         }
+
+
+def _count_status(result: ReviewResult, status: str) -> int:
+    """Сколько цитат получили этот статус проверки."""
+    return sum(
+        1
+        for c in result.criteria
+        for e in c.evidence
+        if e.status.value == status
+    )
 
 
 def _to_case_run(label: str, i: int, result: ReviewResult) -> CaseRun:
@@ -191,6 +233,9 @@ def _to_case_run(label: str, i: int, result: ReviewResult) -> CaseRun:
         duration_s=round(result.duration_ms / 1000, 1),
         evidence_total=sum(c.evidence_total for c in result.criteria),
         evidence_verified=sum(c.evidence_verified for c in result.criteria),
+        evidence_wrong_block=_count_status(result, "wrong_block"),
+        evidence_approximate=_count_status(result, "approximate"),
+        evidence_not_found=_count_status(result, "not_found"),
         failed_steps=result.failed_steps,
         failed_criteria=sum(1 for c in result.criteria if c.failed),
         ai_score=float((result.ai_signal or {}).get("score", 0.0)),
@@ -240,6 +285,51 @@ def load_rubric(*, fast: bool = False, cache: Path | None = None) -> Rubric:
     return rubric
 
 
+def _provenance(rubric: Rubric, *, fast: bool) -> dict:
+    """Происхождение прогона: на чём считалось и чем.
+
+    Аудит справедливо заметил: отчёт нельзя ни повторить, ни сопоставить с
+    тем, что показывает приложение. Два прогона на разных рубриках или на
+    правленых промптах выглядят одинаково, а расходятся на балл.
+    """
+    import hashlib
+
+    from app.config import settings
+    from app.ingest.loader import file_sha256
+    from app.llm.client import get_client
+    from app.rubric import extract as extract_mod
+
+    client = get_client(fast=fast)
+    prompts = hashlib.sha256(extract_mod._SYSTEM.encode("utf-8")).hexdigest()[:16]
+
+    return {
+        "condition": {
+            "name": CONDITION.name,
+            "sha256": file_sha256(CONDITION) if CONDITION.exists() else "",
+        },
+        "works": [
+            {"label": label, "name": path.name,
+             "sha256": file_sha256(path) if path.exists() else ""}
+            for label, path in CASES
+        ],
+        "rubric_fingerprint": rubric.fingerprint(),
+        "rubric_criteria": len(rubric.criteria),
+        "rubric_total_max": rubric.total_max,
+        "extract_prompts_sha256": prompts,
+        "model": client.model,
+        "temperature": settings.llm_temperature,
+        "seed": settings.llm_seed,
+        "num_ctx": settings.llm_num_ctx,
+        "reasoning_effort": settings.llm_reasoning_effort,
+        # Явная методика: по чему считается «подтверждено».
+        "evidence_rule": (
+            "verified — дословное вхождение цитаты в указанный блок после "
+            "нормализации регистра, пробелов, «ё» и кавычек; approximate — "
+            "нечёткое совпадение от 82 %, подтверждением не считается"
+        ),
+    }
+
+
 def run_bench(
     *,
     runs: int = 3,
@@ -250,7 +340,10 @@ def run_bench(
     """Прогоняет бенчмарк и сохраняет отчёт."""
     rubric = load_rubric(fast=fast)
     condition = read_any(CONDITION)
-    report = BenchReport(started_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+    report = BenchReport(
+        started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        provenance=_provenance(rubric, fast=fast),
+    )
 
     for i in range(runs):
         for label, path in CASES:
@@ -275,7 +368,7 @@ def run_bench(
                     + (f"  ОТКАЗЫ: {run.failed_steps}" if run.failed_steps else "")
                 )
 
-    out = out or (PROJECT_ROOT / "data" / "bench_report.json")
+    out = out or REPORT_PATH
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -310,7 +403,15 @@ def print_summary(report: BenchReport) -> None:
             f"разрыв {pair['mean_gap']:+.1f} — {verdict}"
         )
 
-    print(f"\nподтверждённых цитат:      {s['evidence_verified_rate']:.0%}")  # type: ignore[index]
+    ev = s["evidence_breakdown"]  # type: ignore[index]
+    print()
+    print(f"цитат всего: {ev['total']}")
+    print(f"  дословно подтверждено:       {ev['verified']:3} "
+          f"({s['evidence_verified_rate']:.0%})")  # type: ignore[index]
+    print(f"  дословно, но не в том блоке: {ev['wrong_block']:3}")
+    print(f"  похоже, но не дословно:      {ev['approximate']:3}  ← требует глаз")
+    print(f"  не найдено в работе:         {ev['not_found']:3}")
+    print()
     print(f"среднее время на работу:   {s['mean_duration_s']:.0f} с")  # type: ignore[index]
 
 

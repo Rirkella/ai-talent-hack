@@ -177,10 +177,12 @@ export const api = {
 
   reset: () => request<any>("/demo/reset", { method: "POST" }),
 
-  exportUrl: (assignmentId: string, fmt: string) =>
-    `/api/assignments/${assignmentId}/export?fmt=${fmt}`,
+  exportUrl: (assignmentId: string, fmt: string, history = false) =>
+    `/api/assignments/${assignmentId}/export?fmt=${fmt}` + (history ? "&history=true" : ""),
   exportReviewUrl: (submissionId: string, fmt: string) =>
     `/api/submissions/${submissionId}/export?fmt=${fmt}`,
+  /** Исходный файл работы. Путь на диске сервер берёт сам, по идентификатору. */
+  originalFileUrl: (submissionId: string) => `/api/submissions/${submissionId}/file`,
 };
 
 /**

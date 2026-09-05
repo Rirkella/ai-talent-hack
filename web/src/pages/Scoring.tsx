@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api";
-import { Badge, Section, Spinner } from "../components/ui";
+import { Badge, Hint, Section, Spinner } from "../components/ui";
 
 type Toast = (t: string, tone?: "info" | "ok" | "warn" | "err") => void;
 
@@ -105,12 +105,18 @@ export default function Scoring({
       </div>
 
       <div className="mb-4 border-b pb-3" style={{ borderColor: "var(--border)" }}>
-        <div className="mb-1 text-sm font-medium">Готовые наборы настроек</div>
-        <p className="muted mb-2 text-xs">
-          Набор задаёт все веса разом и применяется к потоку сразу.
-          Встроенные наборы удалить нельзя — это способ вернуться к
-          исходным настройкам, если ползунки увели далеко.
-        </p>
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-sm font-medium">Готовые наборы настроек</span>
+          <Hint
+            text={
+              <>
+                Набор задаёт все веса разом и применяется к потоку сразу.
+                Встроенные наборы удалить нельзя — это способ вернуться к
+                исходным настройкам, если ползунки увели далеко.
+              </>
+            }
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {presets.map((p) => (
             <span key={p.name} className="flex items-center">
@@ -214,12 +220,19 @@ export default function Scoring({
       </div>
 
       <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--border)" }}>
-        <div className="mb-1 text-sm font-medium">Штраф за нарушения оформления</div>
-        <p className="muted mb-2 text-xs">
-          Единственный настраиваемый компонент, который меняет <b>балл</b>, а не
-          приоритет. По умолчанию выключен: условие задания такого штрафа не
-          предусматривает, а критерий «Качество оформления» уже оценивается отдельно.
-        </p>
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-sm font-medium">Штраф за нарушения оформления</span>
+          <Hint
+            text={
+              <>
+                Единственный настраиваемый компонент, который меняет <b>балл</b>,
+                а не приоритет. По умолчанию выключен: условие задания такого
+                штрафа не предусматривает, а критерий «Качество оформления» уже
+                оценивается отдельно.
+              </>
+            }
+          />
+        </div>
         <label className="flex cursor-pointer items-center gap-2 text-sm">
           <input
             type="checkbox"

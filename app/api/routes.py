@@ -11,18 +11,19 @@ import asyncio
 import json
 import shutil
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_user, log_action, require_role
 from app.auth import hash_password, unique_login, verify_password
-from app.clock import as_utc
+from app.clock import as_utc, iso, local
 from app.config import settings
 from app.db import get_session
 from app.events import bus
@@ -86,7 +87,7 @@ async def privacy(session: AsyncSession = Depends(get_session)) -> dict:
         "audit": audit.summary(),
         "recent_calls": [
             {
-                "at": r.at.isoformat(), "host": r.host, "kind": r.kind,
+                "at": iso(r.at), "host": r.host, "kind": r.kind,
                 "purpose": r.purpose, "ok": r.ok,
                 "duration_ms": round(r.duration_ms) if r.duration_ms else None,
             }
@@ -714,9 +715,9 @@ def _assignment_dict(a: Assignment) -> dict:
         "rubric_approved": a.rubric_approved,
         "criteria_count": len(rubric.get("criteria", [])),
         "total_max": sum(c.get("max_score", 0) for c in rubric.get("criteria", [])),
-        "due_at": a.due_at.isoformat() if a.due_at else None,
-        "hard_due_at": a.hard_due_at.isoformat() if a.hard_due_at else None,
-        "review_due_at": a.review_due_at.isoformat() if a.review_due_at else None,
+        "due_at": iso(a.due_at),
+        "hard_due_at": iso(a.hard_due_at),
+        "review_due_at": iso(a.review_due_at),
         "due_soon_lead_s": a.due_soon_lead_s,
     }
 
@@ -1292,7 +1293,13 @@ async def list_submissions(
 
     return [
         _submission_dict(s, assignments.get(s.assignment_id), users, role=user.role)
-        for s in sorted(subs, key=lambda s: (-s.priority_index, s.submitted_at))
+        # Строки без файла всегда в конце очереди, независимо от приоритета:
+        # проверять в них нечего, а стояли они первыми — по времени сдачи.
+        # Ревьюер открывал экран и упирался в «проверять нечего», хотя ниже
+        # лежала настоящая работа.
+        for s in sorted(
+            subs, key=lambda s: (not s.has_file, -s.priority_index, s.submitted_at)
+        )
     ]
 
 
@@ -1301,6 +1308,16 @@ def _rubric_max(a: Assignment | None) -> float | None:
     criteria = ((a.rubric or {}) if a else {}).get("criteria", [])
     total = sum(float(c.get("max_score") or 0.0) for c in criteria)
     return total or None
+
+
+def _rubric_fingerprint(a: Assignment | None) -> str:
+    """Отпечаток действующих критериев задания. Пустая строка — критериев нет."""
+    if a is None or not (a.rubric or {}).get("criteria"):
+        return ""
+    try:
+        return Rubric.model_validate(a.rubric).fingerprint()
+    except Exception:  # noqa: BLE001 — рубрика произвольной формы не должна ронять карточку
+        return ""
 
 
 def _track_name(track_id: str) -> str:
@@ -1336,7 +1353,7 @@ def _submission_dict(
         "track_name": _track_name(s.track),
         "detected_track": s.detected_track,
         "status": s.status,
-        "submitted_at": s.submitted_at.isoformat(),
+        "submitted_at": iso(s.submitted_at),
         "version": s.version,
         "previous_id": s.previous_id,
         "superseded": s.superseded,
@@ -1350,19 +1367,38 @@ def _submission_dict(
         "late_penalty": s.late_penalty,
         "review_state": rstate,
         "review_state_text": rtext,
-        "preliminary_score": review.get("preliminary_score"),
         # Максимум берётся из проверки, а если её ещё не было — из критериев
         # задания. Интерфейс подставлял на это место десятку, и работа курса
         # с максимумом 20 показывалась студенту как «X / 10».
         "max_score": review.get("max_score") or _rubric_max(a),
         "final_score": s.final_score,
-        "confirmed_at": s.confirmed_at.isoformat() if s.confirmed_at else None,
+        "confirmed_at": iso(s.confirmed_at),
     }
 
     # Студент не видит внутренние флаги: приоритет проверки, сигнал генИИ,
     # схожесть с чужими работами. Это внутренняя кухня ревью.
+    #
+    # Предварительный балл — из той же категории, и он лежал в общей части
+    # ответа. Карточка честно писала «на проверке», а рядом в профиле стояло
+    # 16,5 из 20: студент видел непубликованную оценку автоматики. Кейс
+    # требует обратного — публикует результат человек.
     if role != Role.STUDENT:
+        # Проверка выполнена по тем критериям, что действуют сейчас?
+        # Методист правит рубрику и заново её утверждает, а работы,
+        # проверенные до правки, продолжают показывать прежние баллы — и
+        # по виду карточки это не отличить.
+        stale = False
+        if review.get("criteria") and a is not None:
+            current = _rubric_fingerprint(a)
+            saved = review.get("rubric_fingerprint") or ""
+            stale = bool(current and saved and current != saved)
         data |= {
+            "rubric_stale": stale,
+            "preliminary_score": review.get("preliminary_score"),
+            # Есть ли что показывать в разборе. Наличие балла об этом не
+            # говорит: балл может быть выставлен вручную по работе, которую
+            # модель не проверяла.
+            "review_available": bool(review.get("criteria")),
             "priority_index": s.priority_index,
             "ai_score": s.ai_score,
             "ai_verdict": s.ai_verdict,
@@ -1376,6 +1412,56 @@ def _submission_dict(
     else:
         data |= {"feedback": s.final_feedback if s.confirmed_at else ""}
     return data
+
+
+# Состояния по-русски: ведомость открывает человек, а не программа.
+# В выгрузке стояли внутренние значения `on_time` и `ai_reviewed` — те же,
+# что когда-то печатала колонка «Статус» в таблице методиста.
+_DEADLINE_RU = {
+    "on_time": "сдано в срок",
+    "due_soon": "скоро дедлайн",
+    "late_penalty": "досдача со штрафом",
+    "late_zero": "просрочено, 0 баллов",
+}
+
+_STATUS_RU = {
+    "uploaded": "загружена",
+    "assigned": "ждёт проверки",
+    "in_review": "идёт проверка",
+    "ai_reviewed": "проверено автоматикой",
+    "confirmed": "оценка выставлена",
+    "failed": "проверить не удалось",
+    "returned": "на доработке",
+}
+
+
+def _human_dt(dt: datetime | None) -> str:
+    """Дата для таблицы, которую откроет человек, — в его часовом поясе.
+
+    В выгрузке стояло UTC-время без пояса, и в ведомости оно выглядело
+    местным: три часа разницы там, где по ним сверяют срок сдачи.
+    """
+    shown = local(dt)
+    return shown.strftime("%d.%m.%Y %H:%M") if shown else ""
+
+
+def ensure_may_act(user: User, s: Submission) -> None:
+    """Действия над работой: назначенный ревьюер либо методист.
+
+    Одно правило на все действия. Раньше каждая точка решала сама, и они
+    разошлись: смотреть чужую работу ревьюеру запрещал 403, а запустить по
+    ней проверку моделью, выставить вердикт по признакам генеративного ИИ и
+    подтвердить оценку — не запрещал никто. Смотреть нельзя, а оценивать
+    можно — так быть не должно.
+    """
+    if user.role == Role.REVIEWER and s.reviewer_id != user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Работа назначена другому ревьюеру. Действия по ней доступны "
+            "ему или методисту.",
+        )
+    if user.role == Role.STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Это действие не для студента")
 
 
 @router.get("/submissions/{submission_id}")
@@ -1427,7 +1513,7 @@ async def get_submission(
             "id": p.id,
             "version": p.version,
             "file_name": p.file_name,
-            "submitted_at": p.submitted_at.isoformat(),
+            "submitted_at": iso(p.submitted_at),
             "final_score": p.final_score,
             "preliminary_score": prev_review.get("preliminary_score"),
             "max_score": prev_review.get("max_score"),
@@ -1647,6 +1733,7 @@ async def start_review(
     s = await session.get(Submission, submission_id)
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Работа не найдена")
+    ensure_may_act(user, s)
     # Работы без файла проверять нечем. Отказ обязан называть причину:
     # раньше такая попытка доходила до читателя и возвращалась ошибкой
     # «Формат '' не поддерживается» со списком 31 расширения — по ней
@@ -1711,6 +1798,37 @@ async def review_all(
     skipped = [s.file_name for s in subs if s not in ready]
 
     jobs = [await queue.enqueue(s.id) for s in ready]
+
+    # Работы, проверенные по прежним критериям, в этот запуск не попадают:
+    # их состояние `ai_reviewed`, а не «ждёт проверки». Но молчать о них
+    # нельзя — их баллы посчитаны по рубрике, которой больше нет.
+    current = _rubric_fingerprint(a)
+    stale = []
+    if current:
+        checked = (
+            await session.execute(
+                select(Submission).where(
+                    Submission.assignment_id == assignment_id,
+                    Submission.superseded.is_(False),
+                    Submission.status == SubmissionStatus.AI_REVIEWED,
+                )
+            )
+        ).scalars().all()
+        stale = [
+            s.file_name
+            for s in checked
+            if (s.review or {}).get("criteria")
+            and ((s.review or {}).get("rubric_fingerprint") or "") != current
+        ]
+
+    note = []
+    if skipped:
+        note.append(f"Пропущено работ без файла: {len(skipped)}.")
+    if stale:
+        note.append(
+            f"Проверено по прежним критериям: {len(stale)}. "
+            "Их баллы посчитаны по другой рубрике — запустите проверку заново."
+        )
     await log_action(session, user, "review.start_all", target=assignment_id,
                      manual_actions_saved=len(jobs) * 3)
     await session.commit()
@@ -1719,9 +1837,8 @@ async def review_all(
         "queued": len(jobs),
         "job_ids": jobs,
         "skipped": skipped,
-        "note": (
-            f"Пропущено работ без файла: {len(skipped)}." if skipped else ""
-        ),
+        "stale": stale,
+        "note": " ".join(note),
     }
 
 
@@ -1750,19 +1867,33 @@ async def confirm(
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Работа не найдена")
 
-    # Подтверждает назначенный ревьюер либо методист. Проверки не было
-    # вовсе: любой ревьюер мог выставить оценку по чужой работе — при том
-    # что открыть её ему запрещено (403 в `get_submission`). Смотреть
-    # нельзя, а оценивать можно — так быть не должно.
-    if user.role == Role.REVIEWER and s.reviewer_id != user.id:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Работа назначена другому ревьюеру. Подтвердить результат может "
-            "он или методист.",
-        )
+    ensure_may_act(user, s)
 
-    review = dict(s.review or {})
+    # Глубокая копия обязательна. `dict(s.review)` копирует только верхний
+    # уровень: вложенные словари критериев остаются теми же объектами, что
+    # и в загруженном значении. Правка `c["score"] = new` меняла их **на
+    # месте**, поэтому «прежнее» значение в состоянии сессии оказывалось
+    # уже исправленным, SQLAlchemy сравнивал новое со старым, не видел
+    # разницы и не включал колонку в UPDATE. Ответ приходил с итогом 6,
+    # а следующий GET снова показывал 0,5 — оценка человека молча пропадала.
+    review = deepcopy(s.review or {})
     criteria = review.get("criteria", [])
+
+    # Срок пересчитывается здесь и сейчас, по времени сдачи и срокам
+    # задания. Доверять `review["penalties"]` нельзя: повторный запуск
+    # ревью перезаписывает результат без штрафа, и подтверждение публиковало
+    # полный балл по просроченной работе.
+    assignment = await session.get(Assignment, s.assignment_id)
+    deadline_status = None
+    if assignment is not None:
+        from app.notify.scheduler import apply_deadline_rules
+
+        # Правило применяется к копии: сохраняем её ниже, вместе с
+        # выставленными человеком баллами.
+        s.review = review
+        deadline_status = apply_deadline_rules(s, assignment)
+        review = deepcopy(s.review or {})
+        criteria = review.get("criteria", [])
 
     # Максимум балла: из результата проверки, а если её не было — из
     # критериев задания. Без этого запаса у непроверенной работы верхняя
@@ -1788,6 +1919,10 @@ async def confirm(
                     f"Балл по критерию «{c.get('criterion_name', c['criterion_id'])}» "
                     f"должен быть от 0 до {top:g}, получено {new:g}.",
                 )
+            # Оценка модели сохраняется отдельно и не затирается: на ней
+            # держится метрика согласия «как часто человек правит балл».
+            if c.get("ai_score") is None:
+                c["ai_score"] = c.get("score")
             c["score"] = new
 
     # Итог считает сервер, а не клиент.
@@ -1801,23 +1936,46 @@ async def confirm(
     # Рычаг ревьюера — баллы по критериям; итог из них выводится. Поэтому
     # при переданных баллах сервер пересчитывает сумму сам и сам вычитает
     # штрафы.
+    # Присланный клиентом итог сервер не использует, когда есть из чего
+    # считать, — но проверяет. Значение вне шкалы означает сломанный клиент
+    # или запрос мимо интерфейса, и молча его исправлять хуже, чем сказать
+    # об ошибке: балл 999 из 10 не должен выглядеть как успешно принятый.
+    if max_score and not (0 <= body.final_score <= max_score):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Итоговый балл должен быть от 0 до {max_score:g}, "
+            f"получено {body.final_score:g}."
+            if body.final_score >= 0
+            else f"Итоговый балл не может быть отрицательным, получено {body.final_score:g}.",
+        )
+
     penalties = sum(float(p.get("amount") or 0.0) for p in review.get("penalties", []))
-    if body.criteria_scores and criteria:
+    if criteria:
         # Суммируются ВСЕ критерии, включая те, что модель оценить не смогла.
         # Флаг `failed` означает «автоматика не справилась», и интерфейс прямо
         # предлагает ревьюеру поставить балл руками — «оцените вручную».
         # Исключать такие критерии из суммы значило бы молча выбросить
         # выставленную человеком оценку.
-        base = sum(float(c.get("score") or 0.0) for c in criteria)
+        #
+        # Считается всегда, а не только когда клиент прислал баллы: без
+        # `criteria_scores` итог брался прямо из тела запроса, и запрос мимо
+        # интерфейса обходил и штраф за срок, и границы шкалы.
+        base = sum(
+            float(c.get("score") or 0.0) * float(c.get("weight") or 1.0) for c in criteria
+        )
         final_score = round(max(0.0, base - penalties), 2)
     else:
+        # Проверки не было вовсе — оценку человек выставляет целиком сам,
+        # и единственное, что может сделать сервер, — проверить границы.
         final_score = body.final_score
 
     # Жёсткий срок пройден — по правилу из условия работа оценивается в ноль.
     # Это не мнение ревьюера и не вычитаемый штраф, а прямое требование, и
     # соблюдать его должен сервер: до этого работа, просроченная
     # окончательно, подтверждалась с полным баллом.
-    forced_zero = s.deadline_state == DeadlineState.LATE_ZERO
+    forced_zero = bool(deadline_status.forces_zero) if deadline_status else (
+        s.deadline_state == DeadlineState.LATE_ZERO
+    )
     if forced_zero:
         final_score = 0.0
 
@@ -1849,7 +2007,9 @@ async def confirm(
     s.status = SubmissionStatus.CONFIRMED
     s.score_edited = preliminary is not None and abs(preliminary - final_score) > 1e-6
 
-    if body.criteria_scores and s.review:
+    # Результат сохраняется всегда: в нём и выставленные человеком баллы,
+    # и пересчитанный по актуальным срокам штраф.
+    if s.review:
         s.review = review
 
     await log_action(
@@ -1908,6 +2068,7 @@ async def ai_verdict(
     s = await session.get(Submission, submission_id)
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Работа не найдена")
+    ensure_may_act(user, s)
     s.ai_verdict = body.verdict
     s.ai_verdict_comment = body.comment
     await log_action(session, user, "ai.verdict", target=submission_id, verdict=body.verdict)
@@ -1984,7 +2145,7 @@ async def notifications(
     return [
         {"id": n.id, "kind": n.kind, "title": n.title, "body": n.body,
          "severity": n.severity, "read": n.read, "submission_id": n.submission_id,
-         "created_at": n.created_at.isoformat()}
+         "created_at": iso(n.created_at)}
         for n in rows
     ]
 
@@ -2340,15 +2501,23 @@ async def student_profile(
     timeline: list[dict] = []
     acc: dict[str, dict] = {}
 
+    # Студенту в его собственном профиле показывается только подтверждённое
+    # человеком. Раньше динамика брала предварительный балл, если итога ещё
+    # нет: работа числилась «на проверке», а график уже рисовал оценку
+    # автоматики — и она же попадала в «средний» и «лучший».
+    show_preliminary = user.role != Role.STUDENT
+
     for s in subs:
         review = s.review or {}
         a = assignments.get(s.assignment_id)
-        score = s.final_score if s.final_score is not None else review.get("preliminary_score")
+        score = s.final_score
+        if score is None and show_preliminary:
+            score = review.get("preliminary_score")
         timeline.append({
             "submission_id": s.id,
             "assignment_title": a.title if a else "",
             "version": s.version,
-            "submitted_at": s.submitted_at.isoformat(),
+            "submitted_at": iso(s.submitted_at),
             "score": score,
             "max_score": review.get("max_score"),
             "confirmed": s.confirmed_at is not None,
@@ -2377,7 +2546,15 @@ async def student_profile(
         if e["n"]
     ]
 
-    scored = [t["score"] for t in timeline if t["score"] is not None]
+    graded = [t for t in timeline if t["score"] is not None]
+    scored = [t["score"] for t in graded]
+    # Средний балл имеет смысл только внутри одной шкалы: у продуктового
+    # фрода максимум 10, у QA — 20, и «средний балл 14» по работам обоих
+    # курсов не означает ничего. Разные максимумы — считаем доли.
+    single_scale = len({t.get("max_score") for t in graded}) <= 1
+    shares = [
+        t["score"] / t["max_score"] for t in graded if t.get("max_score")
+    ]
     return {
         "student": {"id": student.id, "name": student.name},
         "timeline": timeline,
@@ -2385,8 +2562,11 @@ async def student_profile(
         "summary": {
             "submissions": len(subs),
             "confirmed": sum(1 for s in subs if s.confirmed_at),
+            "single_scale": single_scale,
             "mean_score": round(sum(scored) / len(scored), 2) if scored else None,
+            "mean_share": round(sum(shares) / len(shares), 3) if shares else None,
             "best": max(scored) if scored else None,
+            "best_share": round(max(shares), 3) if shares else None,
             "late": sum(1 for s in subs if s.late_penalty),
             # Пустой радар — не ошибка, а нормальное состояние до первого
             # подтверждения. Интерфейс обязан сказать это словами.
@@ -2545,6 +2725,7 @@ async def delete_preset(
 async def export(
     assignment_id: str,
     fmt: str = "csv",
+    history: bool = False,
     user: User = Depends(require_role(Role.COORDINATOR, Role.REVIEWER)),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
@@ -2572,25 +2753,57 @@ async def export(
     users = {u.id: u for u in (await session.execute(select(User))).scalars()}
     a = await session.get(Assignment, assignment_id)
 
+    # Основной режим — ведомость: актуальные версии реально сданных работ.
+    # Раньше выгружалось всё подряд: три настоящих файла превращались в пять
+    # строк за счёт демонстрационной нагрузки без файлов, а после пересдачи —
+    # в шесть, потому что прежняя версия оставалась в списке. По такой
+    # таблице выставить оценки в журнал нельзя.
+    if history:
+        selected = list(subs)
+    else:
+        selected = [s for s in subs if s.has_file and not s.superseded]
+    selected.sort(key=lambda s: (
+        users[s.student_id].name if s.student_id in users else s.student_id
+    ))
+
+    max_score = _rubric_max(a) or 0.0
+
     headers = [
-        "Студент", "Файл", "Направление", "Сдано", "Состояние срока", "Штраф",
-        "Предварительный балл", "Итоговый балл", "Балл изменён ревьюером",
-        "Приоритет проверки", "Сигнал ИИ", "Вердикт по ИИ", "Ревьюер",
-        "Статус", "Подтверждено",
+        "Студент", "Работа", "Версия", "Направление", "Сдано", "Состояние срока",
+        "Штраф", "Итоговый балл", "Максимум", "Комментарий студенту",
+        "Балл изменён ревьюером", "Предварительный балл", "Приоритет проверки",
+        "Сигнал ИИ", "Вердикт по ИИ", "Ревьюер", "Статус", "Подтверждено",
+        "Идентификатор работы",
     ]
+    if history:
+        headers += ["Заменяет", "Заменена"]
+
     rows = []
-    for s in subs:
+    for s in selected:
         review = s.review or {}
-        rows.append([
+        row = [
             users[s.student_id].name if s.student_id in users else s.student_id,
-            s.file_name, s.track, s.submitted_at.strftime("%d.%m.%Y %H:%M"),
-            s.deadline_state, f"{s.late_penalty:g}",
-            review.get("preliminary_score", ""), s.final_score if s.final_score is not None else "",
+            s.file_name, s.version, _track_name(s.track),
+            _human_dt(s.submitted_at),
+            _DEADLINE_RU.get(s.deadline_state, s.deadline_state),
+            f"{s.late_penalty:g}",
+            # Итог и комментарий — то, что человек опубликовал студенту.
+            # Пустые ячейки означают «ещё не проверено», и это честнее, чем
+            # подставить туда предварительный балл.
+            s.final_score if s.final_score is not None else "",
+            f"{review.get('max_score') or max_score:g}",
+            " ".join((s.final_feedback or "").split()),
             "да" if s.score_edited else "нет",
+            review.get("preliminary_score", ""),
             f"{s.priority_index:.2f}", f"{s.ai_score:.2f}", s.ai_verdict or "",
             users[s.reviewer_id].name if s.reviewer_id in users else "",
-            s.status, s.confirmed_at.strftime("%d.%m.%Y %H:%M") if s.confirmed_at else "",
-        ])
+            _STATUS_RU.get(s.status, s.status),
+            _human_dt(s.confirmed_at),
+            s.id,
+        ]
+        if history:
+            row += [s.previous_id or "", "да" if s.superseded else "нет"]
+        rows.append(row)
 
     name = f"review_{(a.track if a else 'export')}_{datetime.now():%Y%m%d_%H%M}"
 
@@ -2658,6 +2871,48 @@ async def export(
     )
 
 
+@router.get("/submissions/{submission_id}/file")
+async def download_original(
+    submission_id: str,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    """Исходный файл работы — тот, что сдал студент.
+
+    Нужен ревьюеру: текстовая модель не смотрит изображения, и карточка
+    честно пишет «изображение не оценено». Но посмотреть матрицу рисков или
+    схему C4 глазами было негде — файл лежал на диске без единой ссылки.
+
+    Путь берётся из базы по идентификатору работы. Имя файла из запроса не
+    принимается вовсе: клиент называет работу, а не место на диске.
+    """
+    s = await session.get(Submission, submission_id)
+    if s is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Работа не найдена")
+    if user.role == Role.STUDENT:
+        if s.student_id != user.id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Это чужая работа")
+    else:
+        ensure_may_act(user, s)
+
+    if not s.file_path:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "К этой работе не приложен файл — скачивать нечего.",
+        )
+    path = Path(s.file_path)
+    if not path.exists():
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"Файл работы не найден на диске: {s.file_name}.",
+        )
+    return FileResponse(
+        path,
+        filename=s.file_name or path.name,
+        media_type="application/octet-stream",
+    )
+
+
 @router.get("/submissions/{submission_id}/export")
 async def export_review(
     submission_id: str,
@@ -2669,8 +2924,13 @@ async def export_review(
     s = await session.get(Submission, submission_id)
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Работа не найдена")
-    if user.role == Role.STUDENT and s.student_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Это чужая работа")
+    if user.role == Role.STUDENT:
+        if s.student_id != user.id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Это чужая работа")
+    else:
+        # Ревьюер выгружал разбор любой работы, в том числе чужой: открыть
+        # её в интерфейсе он не мог, а скачать файлом — мог.
+        ensure_may_act(user, s)
 
     review = s.review or {}
     # Студенту — только фидбек, без внутренних флагов.
@@ -2716,7 +2976,8 @@ async def export_review(
                 lines.append("")
                 lines.append("**Доказательства:**")
                 for ev in c["evidence"]:
-                    mark = "✔" if ev["status"] == "verified" else "✘"
+                    mark = {"verified": "✔", "wrong_block": "~",
+                            "approximate": "≈"}.get(ev["status"], "✘")
                     lines.append(f"- {mark} §{ev['block']} ({ev['similarity']:g}%): «{ev['quote']}»")
             if c.get("gaps"):
                 lines.append("")

@@ -14,7 +14,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, download, type User } from "../api";
-import { ActionButton, Badge, Bar, Empty, Section, Spinner, StatusIcon } from "../components/ui";
+import {
+  ActionButton,
+  Badge,
+  Bar,
+  Empty,
+  Hint,
+  Section,
+  Spinner,
+  StatusBadge,
+  StatusIcon,
+} from "../components/ui";
 import { RubricPanel } from "./Coordinator";
 import { CreateAssignment } from "./Manage";
 
@@ -44,7 +54,13 @@ export default function Reviewer({
   useEffect(() => {
     api.submissions().then((rows) => {
       setItems(rows);
-      setSelected((cur) => cur ?? rows[0]?.id ?? null);
+      // Открывается первая работа, в которой есть что смотреть. Занятые
+      // места прошлого потока лежат в конце очереди, но если выбирать
+      // просто «первую строку», экран мог открыться на строке без файла.
+      setSelected(
+        (cur) =>
+          cur ?? rows.find((r: any) => r.has_file !== false)?.id ?? rows[0]?.id ?? null,
+      );
     });
   }, [tick, user.id]);
 
@@ -69,7 +85,25 @@ export default function Reviewer({
     <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
       <aside className="flex min-w-0 flex-col gap-2">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-semibold">Моя очередь</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">Моя очередь</h2>
+            {/*
+              Два абзаца пояснения висели здесь постоянно и отодвигали саму
+              очередь вниз. Читают их один раз — значит, это подсказка.
+            */}
+            <Hint
+              text={
+                <>
+                  Сверху те работы, где автоматика вероятнее ошиблась: слабые
+                  доказательства, признаки ИИ, балл на границе. Смотрите по
+                  порядку. Проверку моделью запускаете вы — кнопкой в карточке
+                  работы справа; методист может запустить сразу по всему
+                  заданию. Балл остаётся предварительным, пока вы его не
+                  подтвердите.
+                </>
+              }
+            />
+          </div>
           <span className="muted text-xs">{items?.length ?? 0} работ</span>
         </div>
         {/*
@@ -78,17 +112,23 @@ export default function Reviewer({
           студента в списке при сдаче.
         */}
         <CreateAssignment refs={refs} toast={toast} onCreated={() => refresh()} />
-        <p className="muted text-xs">
-          Сверху те работы, где автоматика вероятнее ошиблась: слабые
-          доказательства, признаки ИИ, балл на границе. Смотрите по порядку.
-        </p>
-        <p className="muted text-xs">
-          Проверку моделью запускаете вы — кнопкой в карточке работы справа.
-          Методист может запустить сразу по всему заданию. Балл после этого
-          остаётся предварительным, пока вы его не подтвердите.
-        </p>
         {!items && <Spinner label="Загрузка…" />}
         {items?.length === 0 && <Empty>Вам пока не назначено работ.</Empty>}
+        {/*
+          Очередь только из занятых мест — это не «пусто», но и работать
+          не с чем. Молчать здесь нельзя: экран выглядит рабочим, а кнопки
+          проверки нет ни в одной карточке, и причина не видна.
+        */}
+        {items != null && items.length > 0 && items.every((s) => s.has_file === false) && (
+          <div
+            className="rounded p-2 text-xs"
+            style={{ background: "var(--surface-2)", color: "var(--warn)" }}
+          >
+            Проверять пока нечего: все строки в вашей очереди — занятые места
+            прошлого потока без файлов. Работы появятся, когда методист
+            распределит новые сдачи.
+          </div>
+        )}
         {items?.map((s) => (
           <button
             key={s.id}
@@ -175,20 +215,6 @@ function PriorityDot({ value }: { value: number }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, [string, any]> = {
-    uploaded: ["загружена", "default"],
-    assigned: ["назначена", "info"],
-    in_review: ["идёт проверка", "info"],
-    ai_reviewed: ["проверено автоматикой", "ok"],
-    confirmed: ["подтверждена", "ok"],
-    failed: ["проверить не удалось", "err"],
-    returned: ["на доработке", "warn"],
-  };
-  const [text, tone] = map[status] ?? [status, "default"];
-  return <Badge tone={tone}>{text}</Badge>;
-}
-
 function DeadlineBadge({ state, label }: { state: string; label: string }) {
   const tone =
     state === "late_zero" ? "err" : state === "late_penalty" ? "warn" : state === "due_soon" ? "warn" : "ok";
@@ -216,13 +242,61 @@ function SubmissionCard({
     evidence: true, ai: true, formal: true, pii: false,
   });
 
-  useEffect(() => {
+  /*
+    Черновик ревьюера защищён от фоновых обновлений.
+
+    Живая шина событий дёргает перезагрузку карточки на каждое событие в
+    системе: завершилась чужая проверка, методист сдвинул сроки другого ДЗ,
+    прошло распределение. Каждый ответ GET приходит новым объектом, и форма
+    переинициализировалась — набранный, но не отправленный комментарий
+    молча заменялся сохранённым. Ревьюер терял работу, ничего не нажимая.
+
+    Поэтому форма заполняется по идентификатору работы, а не по объекту
+    ответа. Новый результат по этой же работе (у него другое `created_at`)
+    не подменяет ввод: если ревьюер уже что-то правил, появляется
+    предложение принять обновление явно.
+  */
+  const [base, setBase] = useState<{ id: string; stamp: string } | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [incoming, setIncoming] = useState<string | null>(null);
+
+  const stamp: string = review?.created_at ?? "";
+
+  const adopt = useCallback(() => {
     const init: Record<string, number> = {};
     for (const c of review?.criteria ?? []) init[c.criterion_id] = c.score;
     setScores(init);
-    setFeedback(detail.final_score != null ? detail.feedback ?? "" : review?.student_feedback ?? "");
+    setFeedback(
+      detail.final_score != null ? detail.feedback ?? "" : review?.student_feedback ?? "",
+    );
     setHighlight(null);
-  }, [detail.id, review]);
+    setBase({ id: detail.id, stamp });
+    setDirty(false);
+    setIncoming(null);
+  }, [detail.id, detail.final_score, detail.feedback, review, stamp]);
+
+  useEffect(() => {
+    // Другая работа — форма заполняется заново, это ожидаемо.
+    if (base == null || base.id !== detail.id) {
+      adopt();
+      return;
+    }
+    // Та же работа, но результат обновился.
+    if (base.stamp !== stamp) {
+      if (dirty) setIncoming(stamp);
+      else adopt();
+    }
+  }, [detail.id, stamp, base, dirty, adopt]);
+
+  /** Правка формы — с этого момента черновик защищён. */
+  const editScores = (next: Record<string, number>) => {
+    setScores(next);
+    setDirty(true);
+  };
+  const editFeedback = (next: string) => {
+    setFeedback(next);
+    setDirty(true);
+  };
 
   // Жёсткий срок пройден — по правилу из условия работа оценивается в ноль,
   // сколько бы баллов ни набрали критерии. Это решает сервер; интерфейс
@@ -321,6 +395,11 @@ function SubmissionCard({
             (r.score_edited ? " — вы его изменили." : " — без правок."),
           "ok",
         );
+        // Отправленное становится новой основой черновика: иначе следующее
+        // фоновое событие сочло бы форму «с несохранёнными правками» и
+        // спрашивало бы про обновление на пустом месте.
+        setDirty(false);
+        setIncoming(null);
         onChanged();
         reload();
       })
@@ -341,6 +420,33 @@ function SubmissionCard({
               {detail.track_name ?? detail.track}
             </div>
             <div className="mt-1 text-xs">{detail.deadline_detail}</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {/*
+                Ссылка на исходный файл. Текстовая модель не смотрит
+                изображения и честно пишет «изображение не оценено», но
+                посмотреть схему или матрицу глазами было негде: файл лежал
+                на диске без единой ссылки из интерфейса.
+              */}
+              <button
+                className="btn text-xs"
+                onClick={() =>
+                  download(api.originalFileUrl(detail.id), detail.file_name).catch((e) =>
+                    toast(String(e.message ?? e), "err"),
+                  )
+                }
+                title="Скачать файл, который сдал студент — посмотреть схемы и изображения глазами"
+              >
+                Открыть оригинал
+              </button>
+              {detail.rubric_stale && (
+                <Badge
+                  tone="warn"
+                  title="Критерии оценивания изменились после этой проверки. Баллы посчитаны по прежней рубрике — запустите проверку заново."
+                >
+                  проверено по прежним критериям
+                </Badge>
+              )}
+            </div>
           </div>
           <div className="text-right">
             <div className="muted text-xs">предварительный балл</div>
@@ -385,6 +491,30 @@ function SubmissionCard({
             </div>
           </div>
         </div>
+
+        {/*
+          Пришёл новый результат проверки, а в форме есть несохранённые
+          правки. Раньше он просто затирал их: любое фоновое событие —
+          чужая проверка, сдвиг сроков другого ДЗ — перезагружало карточку
+          и подменяло набранный комментарий сохранённым.
+        */}
+        {incoming && (
+          <div
+            className="mt-3 flex flex-wrap items-center gap-3 rounded p-2 text-xs"
+            style={{ background: "var(--surface-2)", color: "var(--warn)" }}
+          >
+            <span>
+              Пришёл новый результат проверки этой работы. Ваши правки не
+              тронуты — примите обновление, когда будете готовы.
+            </span>
+            <button className="btn text-xs" onClick={adopt}>
+              Принять новый результат
+            </button>
+            <button className="btn text-xs" onClick={() => setIncoming(null)}>
+              Оставить свои правки
+            </button>
+          </div>
+        )}
 
         {review.priority_reasons?.length > 0 && (
           <div className="mt-3 rounded p-2 text-xs" style={{ background: "var(--surface-2)" }}>
@@ -441,7 +571,7 @@ function SubmissionCard({
         criteria={review.criteria ?? []}
         rubric={detail.rubric}
         scores={scores}
-        setScores={setScores}
+        setScores={editScores}
         onHighlight={(blocks) => setHighlight({ blocks, kind: "evidence" })}
       />
 
@@ -531,7 +661,7 @@ function SubmissionCard({
         <textarea
           className="input mb-3 min-h-[160px]"
           value={feedback}
-          onChange={(e) => setFeedback(e.target.value)}
+          onChange={(e) => editFeedback(e.target.value)}
         />
         <div className="flex flex-wrap items-center gap-3">
           <div className="text-sm">
@@ -753,12 +883,22 @@ function CriteriaSection({
                               color:
                                 ev.status === "verified"
                                   ? "var(--ok)"
-                                  : ev.status === "wrong_block"
+                                  : ev.status === "wrong_block" || ev.status === "approximate"
                                     ? "var(--warn)"
                                     : "var(--err)",
                             }}
                           >
-                            {ev.status === "verified" ? "✔" : ev.status === "wrong_block" ? "~" : "✘"}
+                            {/* Зелёная галочка — только за дословное вхождение.
+                                Нечёткое совпадение помечается «≈»: цитата с
+                                отброшенной частицей «не» набирала 94 % и
+                                выглядела подтверждённой. */}
+                            {ev.status === "verified"
+                              ? "✔"
+                              : ev.status === "wrong_block"
+                                ? "~"
+                                : ev.status === "approximate"
+                                  ? "≈"
+                                  : "✘"}
                           </span>
                           <span className="muted whitespace-nowrap">§{ev.block}</span>
                           <span className="flex-1">«{ev.quote}»</span>
@@ -805,9 +945,16 @@ function CriteriaSection({
 function evidenceHint(ev: any): string {
   switch (ev.status) {
     case "verified":
-      return `Цитата найдена в §${ev.found_in_block} (схожесть ${ev.similarity}%)`;
+      return `Цитата дословно есть в §${ev.found_in_block}`;
+    case "approximate":
+      return (
+        `Дословно такого текста в работе нет. Ближайший фрагмент — в ` +
+        `§${ev.found_in_block}, схожесть ${ev.similarity}%. Отличаться может ` +
+        `частица «не» или число, поэтому подтверждением это не считается: ` +
+        `сверьте цитату глазами.`
+      );
     case "wrong_block":
-      return `Текст найден, но в §${ev.found_in_block}, а не в §${ev.block}`;
+      return `Текст найден дословно, но в §${ev.found_in_block}, а не в §${ev.block}`;
     case "no_block":
       return `Блока §${ev.block} в работе нет`;
     default:

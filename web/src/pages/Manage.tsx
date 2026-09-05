@@ -174,7 +174,15 @@ export function UploadSubmissions({
       .submissions(assignment.id)
       .then((all) =>
         setExisting(
-          all.filter((x: any) => x.student_id === studentId && !x.superseded),
+          all.filter(
+            (x: any) =>
+              x.student_id === studentId &&
+              !x.superseded &&
+              // Строки без файла — занятое место в очереди прошлого потока.
+              // Заменять «версию 1» того, чего никто не сдавал, бессмысленно,
+              // а в списке они выглядели как настоящие работы студента.
+              x.has_file !== false,
+          ),
         ),
       )
       .catch(() => setExisting([]));
@@ -224,28 +232,23 @@ export function UploadSubmissions({
 
   return (
     <Section
-      title="Загрузка работ"
-      hint="Можно загрузить сразу несколько файлов и раздать их студентам. Студент может сдать и сам — со своей вкладки."
+      title="Загрузить файл работы за студента"
+      hint={
+        <>
+          Обычно работу сдаёт студент сам со своей вкладки. Этот блок — для
+          случая, когда файл пришёл мимо системы: почтой, в чат или выгрузкой
+          из Stepik. Вы указываете, чей это файл, и прикладываете сам файл;
+          работа встаёт в очередь на проверку. Принимаются{" "}
+          {(refs?.formats ?? []).length} расширений — документы, таблицы,
+          ноутбуки, исходный код и <code>.zip</code> с репозиторием.
+          Направление берётся из задания («{trackName(refs, assignment.track)}»),
+          система сверяет его с содержимым и предупреждает при расхождении.
+        </>
+      }
     >
-      <p className="muted mb-3 text-xs">
-        Принимаются документы, таблицы, ноутбуки, исходный код и{" "}
-        <code>.zip</code> с репозиторием — всего{" "}
-        <span title={(refs?.formats ?? []).join(" ")}>
-          {(refs?.formats ?? []).length} расширений
-        </span>
-        . Направление работы берётся из задания («{trackName(refs, assignment.track)}»);
-        система дополнительно определяет его по содержимому и предупреждает при
-        расхождении — решение остаётся за вами.
-      </p>
-      <p className="muted mb-3 text-xs">
-        Если работа сдаётся повторно после доработки, укажите, какую версию она
-        заменяет: предыдущая сохранится для сравнения и уйдёт из очереди
-        ревьюера, а проверять её продолжит тот же человек.
-      </p>
-
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-xs">
-          <span className="muted">Студент</span>
+          <span className="muted">Чья это работа</span>
           <select
             className="input mt-0.5 min-w-[220px]"
             value={studentId}
@@ -259,27 +262,30 @@ export function UploadSubmissions({
           </select>
         </label>
 
-        <label className="text-xs">
-          <span className="muted">Повторная сдача</span>
-          <select
-            className="input mt-0.5 min-w-[240px]"
-            value={replaces}
-            onChange={(e) => setReplaces(e.target.value)}
-            disabled={!existing.length}
-            title={
-              existing.length
-                ? "Новая версия заменит выбранную работу в очереди"
-                : "У студента нет работ по этому заданию"
-            }
-          >
-            <option value="">— новая работа —</option>
-            {existing.map((x) => (
-              <option key={x.id} value={x.id}>
-                версия {x.version}: {x.file_name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/*
+          Выбор версии показывается только когда у студента есть что
+          заменять. Пустой список «Повторная сдача» рядом с выбором студента
+          читался как список чего-то, что нужно выбрать перед загрузкой, —
+          вопрос «это я выбираю виды критериев?» возник именно здесь.
+        */}
+        {existing.length > 0 && (
+          <label className="text-xs">
+            <span className="muted">Это новая работа или пересдача</span>
+            <select
+              className="input mt-0.5 min-w-[240px]"
+              value={replaces}
+              onChange={(e) => setReplaces(e.target.value)}
+              title="Пересдача не создаёт вторую строку в очереди: предыдущая версия сохраняется для сравнения, проверяет её тот же ревьюер"
+            >
+              <option value="">новая работа</option>
+              {existing.map((x) => (
+                <option key={x.id} value={x.id}>
+                  пересдача: {x.file_name} (версия {x.version})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label className="btn cursor-pointer">
           {busy ? "Загрузка…" : "Выбрать файлы"}

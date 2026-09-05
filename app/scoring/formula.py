@@ -60,6 +60,31 @@ class ScoringConfig:
     borderline_band: float = 0.15
 
 
+def base_score(result: ReviewResult) -> float:
+    """Сумма баллов по критериям с весами — до вычитания штрафов.
+
+    Одна функция на все места, где считается балл: первичная агрегация,
+    пересчёт при наступлении срока и подтверждение человеком. Раньше это
+    были три разные формулы. Планировщик складывал баллы **без весов**, а
+    подтверждение — вместе с неоценёнными критериями; на рубрике с весом,
+    отличным от единицы, три места давали три разных числа.
+
+    Неоценённый моделью критерий (`failed`) в сумму входит: его балл равен
+    нулю, пока ревьюер не проставит его руками, а после правки исключать
+    его значило бы выбросить оценку человека.
+
+    Считается по оценке **модели** (`ai_score`), а не по текущему `score`:
+    это предварительный балл автоматики, и он обязан оставаться прежним
+    после того, как ревьюер поправил критерии. Иначе следующий пересчёт
+    срока подменил бы его суммой оценок человека, и метрика согласия
+    «как часто человек правит балл» сравнивала бы число само с собой.
+    """
+    return sum(
+        (c.ai_score if c.ai_score is not None else c.score) * (c.weight or 1.0)
+        for c in result.criteria
+    )
+
+
 def aggregate(
     result: ReviewResult, rubric: Rubric, config: ScoringConfig | None = None
 ) -> ReviewResult:
@@ -67,17 +92,20 @@ def aggregate(
     cfg = config or ScoringConfig()
 
     # ── (а) предварительный балл ─────────────────────────────────────────
-    total = 0.0
     max_total = 0.0
     for c in result.criteria:
         weight = 1.0
         if (crit := rubric.criterion(c.criterion_id)) is not None:
             weight = crit.weight
+        # Вес и оценка модели остаются в самом результате: по ним считают
+        # балл там, где рубрики нет, и сравнивают решение человека с тем,
+        # что предложила автоматика.
+        c.weight = weight
+        if c.ai_score is None:
+            c.ai_score = c.score
         max_total += c.max_score * weight
-        # Неоценённый критерий не приносит баллов, но и не обнуляет работу:
-        # его максимум остаётся в знаменателе, а ревьюер видит пометку.
-        if not c.failed:
-            total += c.score * weight
+
+    total = base_score(result)
 
     penalties: list[dict] = []
 
@@ -174,24 +202,44 @@ def _summary(result: ReviewResult) -> str:
 
 
 def apply_deadline_penalty(
-    result: ReviewResult, *, penalty: float, reason: str
+    result: ReviewResult, *, penalty: float, reason: str, forces_zero: bool = False
 ) -> ReviewResult:
-    """Штраф за просрочку по правилу из условия.
+    """Штраф за просрочку по правилу из условия — идемпотентно.
 
     Вынесен отдельно от `aggregate`, потому что применяется по событию
     наступления срока и пересчитывается на лету, когда работа переходит
     из состояния в состояние.
+
+    Функция **переписывает** штраф за срок, а не добавляет к прежнему, и
+    считает балл от суммы по критериям, а не вычитает из уже уменьшенного
+    числа. Поэтому повторный вызов ничего не меняет — это важно, потому
+    что вызывают её теперь из трёх мест: при сохранении результата ревью,
+    при наступлении срока и при подтверждении оценки человеком.
     """
-    result.penalties = [p for p in result.penalties if p["code"] != "deadline"]
-    if penalty > 0:
-        result.penalties.append(
-            {"code": "deadline", "title": "Нарушение срока сдачи",
-             "amount": penalty, "detail": reason}
-        )
-    base = sum(
-        c.score * 1.0 for c in result.criteria if not c.failed
-    )
-    total_penalty = sum(p["amount"] for p in result.penalties)
-    result.preliminary_score = round(max(0.0, base - total_penalty), 2)
+    result.penalties = [p for p in result.penalties if p.get("code") != "deadline"]
+    # Без критериев считать не из чего — тогда основой служит уже посчитанный
+    # балл. Так бывает у результатов, собранных вручную, и у синтетических
+    # результатов в тестах.
+    base = base_score(result) if result.criteria else result.preliminary_score
+
+    if forces_zero:
+        # Правило условия: работа, не сданная до жёсткого срока, оценивается
+        # в ноль. Это не вычитаемый штраф, а обнуление, и `amount` равен
+        # всему набранному баллу — иначе в карточке значится «−0».
+        lost = round(max(0.0, base - sum(p["amount"] for p in result.penalties)), 2)
+        result.penalties.append({
+            "code": "deadline", "title": "Жёсткий срок сдачи пройден",
+            "amount": lost, "detail": reason,
+        })
+        result.preliminary_score = 0.0
+    else:
+        if penalty > 0:
+            result.penalties.append(
+                {"code": "deadline", "title": "Нарушение срока сдачи",
+                 "amount": penalty, "detail": reason}
+            )
+        total_penalty = sum(p["amount"] for p in result.penalties)
+        result.preliminary_score = round(max(0.0, base - total_penalty), 2)
+
     result.reviewer_summary = _summary(result)
     return result

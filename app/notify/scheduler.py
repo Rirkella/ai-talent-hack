@@ -20,6 +20,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.db import session_scope
@@ -94,12 +95,20 @@ _TRANSITION_TEXT: dict[DeadlineState, tuple[str, str, str]] = {
 }
 
 
-async def refresh_submission_state(session, submission: Submission, assignment: Assignment) -> bool:  # noqa: ANN001
-    """Пересчитывает состояние срока и штраф. True — состояние изменилось.
+def apply_deadline_rules(submission: Submission, assignment: Assignment) -> "DeadlineStatus":  # noqa: F821
+    """Приводит работу и сохранённый результат ревью в согласие со сроками.
 
-    Штраф пересчитывается тут же и попадает в сохранённый результат ревью,
-    чтобы балл в интерфейсе менялся вместе с состоянием, а не после
-    перезапуска ревью.
+    Единственное место, где правило срока превращается в число. Вызывается
+    из трёх мест: при сохранении результата проверки, в тике планировщика и
+    при подтверждении оценки человеком.
+
+    Так пришлось сделать после находки аудита: штраф применял только
+    планировщик и только в момент **смены** состояния. Повторный запуск
+    ревью перезаписывал результат заново посчитанным баллом без штрафа, а
+    планировщик на следующем тике видел, что состояние не изменилось, и
+    ничего не трогал. Просроченная работа получала полный балл: 8 вместо 7.
+
+    Функция идемпотентна — повторный вызов не вычитает штраф дважды.
     """
     status = evaluate(
         submitted_at=submission.submitted_at,
@@ -109,35 +118,51 @@ async def refresh_submission_state(session, submission: Submission, assignment: 
         due_soon_lead_s=assignment.due_soon_lead_s,
     )
 
-    if status.state.value == submission.deadline_state and status.penalty == submission.late_penalty:
-        return False
-
     submission.deadline_state = status.state.value
     submission.late_penalty = status.penalty
 
-    # Пересчёт балла с учётом нового штрафа.
     if submission.review:
         from app.agent.schemas import ReviewResult
         from app.scoring.formula import apply_deadline_penalty
 
-        result = ReviewResult.model_validate(submission.review)
-        if status.forces_zero:
-            # `amount` — это то, что снимается, то есть весь набранный балл.
-            # Раньше здесь стояло `result.preliminary_score` уже ПОСЛЕ
-            # обнуления, и штраф всегда записывался нулевым: в карточке
-            # значилось «−0 Жёсткий срок сдачи пройден», а при подтверждении
-            # сумма штрафов равнялась нулю — работа, которую условие велит
-            # оценить в ноль, уходила студенту с полным баллом.
-            lost = result.preliminary_score
-            result.preliminary_score = 0.0
-            result.penalties = [{
-                "code": "deadline", "title": "Жёсткий срок сдачи пройден",
-                "amount": lost, "detail": status.detail,
-            }]
+        try:
+            result = ReviewResult.model_validate(submission.review)
+        except ValidationError:
+            # Результат сохранён другой версией схемы. Состояние срока
+            # выставить всё равно надо: отказ целиком означал бы 500 на
+            # подтверждении оценки из-за формы старой записи.
+            log.warning("результат ревью %s не разобран, штраф не пересчитан", submission.id)
         else:
-            apply_deadline_penalty(result, penalty=status.penalty, reason=status.detail)
-        submission.review = result.model_dump(mode="json")
+            apply_deadline_penalty(
+                result,
+                penalty=status.penalty,
+                reason=status.detail,
+                forces_zero=status.forces_zero,
+            )
+            # Присваивание нового объекта обязательно: SQLAlchemy не следит
+            # за изменениями внутри JSON-колонки.
+            submission.review = result.model_dump(mode="json")
 
+    return status
+
+
+async def refresh_submission_state(session, submission: Submission, assignment: Assignment) -> bool:  # noqa: ANN001
+    """Пересчитывает состояние срока и штраф. True — состояние изменилось.
+
+    Пересчёт выполняется **всегда**, а признак изменения нужен только для
+    того, чтобы не слать уведомление о переходе повторно.
+    """
+    before_state = submission.deadline_state
+    before_penalty = submission.late_penalty
+
+    status = apply_deadline_rules(submission, assignment)
+    changed = status.state.value != before_state or status.penalty != before_penalty
+    if not changed:
+        return False
+
+    # Событие несёт предварительный балл — значит, оно для сотрудников.
+    # Смена состояния срока сама по себе студенту видна: она приходит
+    # уведомлением ниже, но уже без непубликованного числа.
     await bus.publish(
         "deadline_changed",
         {
@@ -148,6 +173,18 @@ async def refresh_submission_state(session, submission: Submission, assignment: 
             "penalty": status.penalty,
             "score": (submission.review or {}).get("preliminary_score"),
         },
+        roles=["reviewer", "coordinator"],
+    )
+    await bus.publish(
+        "deadline_changed",
+        {
+            "submission_id": submission.id,
+            "state": status.state.value,
+            "label": status.label,
+            "detail": status.detail,
+            "penalty": status.penalty,
+        },
+        roles=["student"],
     )
 
     if (text := _TRANSITION_TEXT.get(status.state)) is not None:

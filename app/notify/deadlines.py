@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from app.clock import as_utc as _aware, now as now_utc
+from app.clock import as_utc as _aware, local as _local, now as now_utc, tz_name
 from app.models import DeadlineState
 
 
@@ -75,21 +75,21 @@ def evaluate(
         if reference <= due_at:
             return DeadlineStatus(
                 DeadlineState.ON_TIME, 0.0, "сдано в срок",
-                f"Сдано {reference:%d.%m %H:%M:%S}, до срока "
+                f"Сдано {_show(reference)}, до срока "
                 f"{(due_at - reference).total_seconds() / 60:.0f} мин.",
             )
         if reference <= hard_due_at:
             return DeadlineStatus(
                 DeadlineState.LATE_PENALTY, late_penalty,
                 f"досдача, штраф −{late_penalty:g}",
-                f"Сдано {reference:%d.%m %H:%M:%S}, после срока "
-                f"{due_at:%d.%m %H:%M:%S}. По условию задания — штраф "
+                f"Сдано {_show(reference)}, после срока "
+                f"{_show(due_at)}. По условию задания — штраф "
                 f"−{late_penalty:g} балл.",
             )
         return DeadlineStatus(
             DeadlineState.LATE_ZERO, 0.0, "просрочено, 0 баллов",
-            f"Сдано {reference:%d.%m %H:%M:%S}, после жёсткого срока "
-            f"{hard_due_at:%d.%m %H:%M:%S}. По условию — 0 баллов.",
+            f"Сдано {_show(reference)}, после жёсткого срока "
+            f"{_show(hard_due_at)}. По условию — 0 баллов.",
             forces_zero=True,
         )
 
@@ -120,9 +120,22 @@ def evaluate(
 
     return DeadlineStatus(
         DeadlineState.LATE_ZERO, 0.0, "просрочено окончательно, 0 баллов",
-        f"Жёсткий срок {hard_due_at:%d.%m %H:%M:%S} прошёл. По условию — 0 баллов.",
+        f"Жёсткий срок {_show(hard_due_at)} прошёл. По условию — 0 баллов.",
         forces_zero=True,
     )
+
+
+
+def _show(dt: datetime | None) -> str:
+    """Момент времени для человека: местный пояс и его подпись.
+
+    В тексте стояла UTC-дата без пояса — «Сдано 07.09 11:30». Рядом
+    интерфейс показывал ту же дату из ISO-поля в местном времени, и два
+    числа расходились на три часа. Контур локальный: пояс сервера и есть
+    пояс читателя.
+    """
+    shown = _local(dt)
+    return f"{shown:%d.%m %H:%M:%S} {tz_name()}" if shown else "—"
 
 
 def _human(seconds: float) -> str:

@@ -136,3 +136,87 @@ def test_normalize_is_idempotent() -> None:
     text = "  Риск:  «мошенничество»  —  высокий\n\n"
     assert normalize(normalize(text)) == normalize(text)
     assert "ё" not in normalize("ёлка")
+
+
+# ── дословность против нечёткого сходства (находка аудита A08) ────────────────
+
+
+def _roi_doc() -> Document:
+    """Два предложения, на которых аудит показал ложное подтверждение."""
+    return Document(
+        source_name="работа.docx",
+        source_format="docx",
+        blocks=[
+            Block(1, BlockKind.PARAGRAPH,
+                  "Расчёт ROI не выполнен, числовые данные отсутствуют."),
+            Block(2, BlockKind.PARAGRAPH, "ROI составляет 10 процентов за год."),
+        ],
+    )
+
+
+def test_dropped_negation_is_not_verified() -> None:
+    """Цитата без частицы «не» набирала 93,9 % и считалась подтверждённой.
+
+    Смысл при этом переворачивается на противоположный: в работе написано,
+    что расчёта нет, а «подтверждённая» цитата утверждает, что он есть.
+    """
+    ev = verify_evidence(
+        Evidence(block=1, quote="Расчёт ROI выполнен, числовые данные отсутствуют."),
+        _roi_doc(),
+    )
+    assert ev.status is EvidenceStatus.APPROXIMATE
+    assert not ev.is_verified
+    assert ev.similarity >= SIMILARITY_THRESHOLD, "сходство осталось высоким — оно и не отрицается"
+
+
+def test_substituted_number_is_not_verified() -> None:
+    """«90 процентов» вместо «10 процентов» — 97,1 % сходства и другое число."""
+    ev = verify_evidence(
+        Evidence(block=2, quote="ROI составляет 90 процентов за год."),
+        _roi_doc(),
+    )
+    assert ev.status is EvidenceStatus.APPROXIMATE
+    assert not ev.is_verified
+
+
+def test_cosmetic_differences_still_verify() -> None:
+    """Регистр, лишние пробелы, «ё» и кавычки не должны ломать дословность.
+
+    Иначе строгость превратилась бы в поток ложных отказов.
+    """
+    ev = verify_evidence(
+        Evidence(block=1, quote="  расчет   ROI НЕ выполнен, числовые данные отсутствуют  "),
+        _roi_doc(),
+    )
+    assert ev.status is EvidenceStatus.VERIFIED
+
+
+def test_verbatim_quote_from_another_block_stays_wrong_block() -> None:
+    """Ошибка в номере блока — не выдумка, и различать их по-прежнему нужно."""
+    ev = verify_evidence(
+        Evidence(block=2, quote="Расчёт ROI не выполнен, числовые данные отсутствуют."),
+        _roi_doc(),
+    )
+    assert ev.status is EvidenceStatus.WRONG_BLOCK
+    assert ev.found_in_block == 1
+
+
+def test_similarity_never_says_100_for_a_non_verbatim_quote() -> None:
+    """«≈ … 100 %» — два взаимоисключающих утверждения в одной строке.
+
+    `partial_ratio` симметричен по длине: когда цитата длиннее блока, он
+    меряет обратное — насколько блок содержится в цитате. Модель, склеившая
+    цитату из нескольких блоков, получала за это 100 % рядом с пометкой
+    «не дословно».
+    """
+    doc = Document(
+        source_name="работа.md",
+        source_format="md",
+        blocks=[Block(1, BlockKind.HEADING, "Продукт")],
+    )
+    ev = verify_evidence(
+        Evidence(block=1, quote="Продукт — каталог легковых автомобилей и проверка истории"),
+        doc,
+    )
+    assert not ev.is_verified
+    assert ev.similarity < 100.0, "не дословная цитата показана как стопроцентная"
